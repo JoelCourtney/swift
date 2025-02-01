@@ -1,0 +1,21 @@
+[package]
+name = "swift"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = [
+    "potato_sat",
+    "swift_macros"
+]
+
+[dependencies]
+serde = { version = "1.0.210", features = ["derive"] }
+derive_more = { version = "2.0.1", features = ["full"] }
+async-trait = "0.1.86"
+tokio = { version = "1.43.0", features = ["full"] }
+tokio-macros = { version = "2.5.0" }
+bincode = { version = "2.0.0-rc.3", features = ["serde"] }
+swift_macros = { path = "./swift_macros" }
+dashmap = "6.1.0"
+foldhash = "0.1.4"
