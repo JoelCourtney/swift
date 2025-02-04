@@ -30,7 +30,7 @@ impl Resource for OperatingMode {
 async fn main() {
     let mut session = Session::<PotatoSat>::default();
     session
-        .add(Duration(1), RechargePotato { amount: 1.0 })
+        .add(Duration(1), RechargePotato { amount: 5 })
         .await;
 
     let battery = &*session
@@ -40,5 +40,16 @@ async fn main() {
         .run(&session.history)
         .await
         .to_string();
-    dbg!(battery);
+
+    let temperature = &*session
+        .op_timelines
+        .temperature
+        .last()
+        .run(&session.history)
+        .await
+        .to_string();
+
+    dbg!(battery, temperature);
 }
+
+

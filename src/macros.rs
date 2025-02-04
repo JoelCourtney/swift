@@ -191,7 +191,7 @@ macro_rules! model {
 /// 5. Resources are accessed with `?` for reading and `:` for writing. (`:?` and `?:` indicate read-write operations.)
 ///    The macro scans your code for these symbols and generates the appropriate code to read and
 ///    write from the simulation.
-/// 6. Activity arguments can be accessed through `self.my_argument()`. This is currently broken.
+/// 6. Activity arguments can be accessed through `args.my_argument`. Modification is not allowed.
 ///
 /// Be careful not to use symbols to indicate operations that you don't do:
 /// - Applying `?` to a value you don't read or `:` to a value you don't write to will slow down simulation.
@@ -213,6 +213,8 @@ macro_rules! impl_activity {
             fn decompose(self, start: Duration) -> Vec<$crate::operation::GroundedOperationBundle<$model>> {
                 let duration = self.duration();
                 let end = start + duration;
+
+                let _self_arc = std::sync::Arc::new(self);
 
                 vec![
                     $(($crate::reexports::swift_macros::identity!($when), Box::new($crate::reexports::swift_macros::operation!($act,$model => $do))),)*

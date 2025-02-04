@@ -36,6 +36,7 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
     }
 
     let uuid = uuid::Uuid::new_v4().to_string().replace("-", "_");
+    let activity_ident = format_ident!("{activity}");
     let bundle_ident = format_ident!("{activity}OpBundle_{uuid}");
     let op_ident = format_ident!("{activity}Op_{uuid}");
     let output_ident = format_ident!("{activity}OpOutput_{uuid}");
@@ -45,6 +46,7 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
 
     let bundle = generate_bundle(
         bundle_ident.clone(),
+        activity_ident.clone(),
         op_ident.clone(),
         model_ident.clone(),
         &reads,
@@ -60,6 +62,7 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
         .expect("could not parse after replacing");
     let op = generate_operation(
         op_ident,
+        activity_ident,
         output_ident.clone(),
         model_ident.clone(),
         extras_module_ident.clone(),
@@ -75,13 +78,14 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
             #bundle
             #op
             #output_struct
-            #bundle_ident
+            #bundle_ident(_self_arc.clone())
         }
     }
 }
 
 fn generate_bundle(
     ident: Ident,
+    activity_ident: Ident,
     op_ident: Ident,
     model_ident: Ident,
     reads: &Vec<&str>,
@@ -106,7 +110,7 @@ fn generate_bundle(
         .collect::<Vec<_>>();
 
     quote! {
-        struct #ident;
+        struct #ident(std::sync::Arc<#activity_ident>);
 
         #[swift::reexports::async_trait::async_trait]
         impl swift::operation::OperationBundle<#model_ident> for #ident {
@@ -115,6 +119,7 @@ fn generate_bundle(
 
                 let op = std::sync::Arc::new(swift::reexports::tokio::sync::RwLock::new(#op_ident {
                     #(#child_idents: #child_idents.1.get_op(),)*
+                    _swift_internal_pls_no_touch_args: self.0.clone(),
                     _swift_internal_pls_no_touch_output: None,
                 }));
 
@@ -127,7 +132,8 @@ fn generate_bundle(
 }
 
 fn generate_operation(
-    ident: Ident,
+    op_ident: Ident,
+    activity_ident: Ident,
     output_ident: Ident,
     model_ident: Ident,
     extras_module_ident: Ident,
@@ -198,14 +204,17 @@ fn generate_operation(
         .map(|i| format_ident!("{i}ResourceTypeTag"));
 
     quote! {
-        struct #ident {
+        struct #op_ident {
             #(#child_idents: std::sync::Arc<dyn swift::operation::Operation<#model_ident, crate::#extras_module_ident::#child_resource_type_tag_idents>>,)*
+            _swift_internal_pls_no_touch_args: std::sync::Arc<#activity_ident>,
             _swift_internal_pls_no_touch_output: Option<#output_ident>
         }
 
-        impl #ident {
+        impl #op_ident {
             async fn run(&mut self, history: &<#model_ident as swift::Model>::History) {
                 use swift::history::AsyncMap;
+
+                let args = &*self._swift_internal_pls_no_touch_args;
 
                 #(let #read_only_resource_idents = *(self.#read_only_child_idents.run(history).await);)*
                 #(let mut #write_only_resource_idents = <crate::#extras_module_ident::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
@@ -226,7 +235,7 @@ fn generate_operation(
 
                 let mut state = swift::history::SwiftDefaultHashBuilder::default().build_hasher();
 
-                std::any::TypeId::of::<#ident>().hash(&mut state);
+                std::any::TypeId::of::<#op_ident>().hash(&mut state);
 
                 #(self.#child_idents.history_hash().hash(&mut state);)*
 
@@ -240,7 +249,7 @@ fn generate_operation(
 
         #(
             #[swift::reexports::async_trait::async_trait]
-            impl swift::operation::Operation<#model_ident, crate::#extras_module_ident::#all_write_resource_type_tag_idents> for swift::reexports::tokio::sync::RwLock<#ident> {
+            impl swift::operation::Operation<#model_ident, crate::#extras_module_ident::#all_write_resource_type_tag_idents> for swift::reexports::tokio::sync::RwLock<#op_ident> {
                 async fn run(&self, history: &<#model_ident as swift::Model>::History) -> swift::reexports::tokio::sync::RwLockReadGuard<<crate::#extras_module_ident::#all_write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType> {
                     if let Ok(mut write) = self.try_write() {
                         write.run(history).await;
@@ -261,14 +270,14 @@ fn generate_operation(
     }
 }
 
-fn generate_output(ident: Ident, extras_module_ident: Ident, writes: &Vec<&str>) -> TokenStream {
+fn generate_output(output_ident: Ident, extras_module_ident: Ident, writes: &Vec<&str>) -> TokenStream {
     let write_idents = writes
         .iter()
         .map(|r| format_ident!("{r}"))
         .collect::<Vec<_>>();
     let write_resource_type_tag_idents = writes.iter().map(|r| format_ident!("{r}ResourceTypeTag"));
     quote! {
-        struct #ident {
+        struct #output_ident {
             #(#write_idents: <crate::#extras_module_ident::#write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType,)*
         }
     }

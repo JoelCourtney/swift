@@ -55,7 +55,7 @@ impl<M: Model> Session<M> {
 /// The trait that all activities implement.
 ///
 /// Do not implement manually. Use the [impl_activity] macro.
-pub trait Activity: Durative + Serialize + for<'a> Deserialize<'a> {
+pub trait Activity: Durative + Clone + Serialize + for<'a> Deserialize<'a> {
     type Model: Model;
 
     fn decompose(self, start: Duration) -> Vec<GroundedOperationBundle<Self::Model>>;
