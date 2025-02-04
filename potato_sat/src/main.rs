@@ -4,8 +4,7 @@ use crate::activities::recharge_potato::RechargePotato;
 use serde::{Deserialize, Serialize};
 use swift::duration::Duration;
 use swift::reexports::tokio;
-use swift::resource::Resource;
-use swift::{model, Session};
+use swift::{model, Resource, Session};
 
 model! {
     pub struct PotatoSat {

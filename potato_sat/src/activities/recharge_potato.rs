@@ -1,8 +1,6 @@
 use crate::PotatoSat;
 use serde::{Deserialize, Serialize};
-use swift::duration::{Duration, Durative};
-use swift::operation::OperationBundle;
-use swift::{impl_activity, Activity, Durative};
+use swift::{impl_activity, Activity, Duration, Durative};
 
 #[derive(Serialize, Deserialize, Durative)]
 #[duration = "Duration(5)"]

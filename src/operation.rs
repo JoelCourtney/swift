@@ -1,3 +1,5 @@
+#![doc(hidden)]
+
 use std::collections::BTreeMap;
 use std::hash::BuildHasher;
 use std::sync::{Arc, Weak};
@@ -23,6 +25,8 @@ pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
 pub trait OperationBundle<M: Model> {
     async fn unpack(&self, time: Duration, timelines: &mut M::OperationTimelines);
 }
+
+pub type GroundedOperationBundle<M> = (Duration, Box<dyn OperationBundle<M>>);
 
 pub struct OperationNode<M: Model, TAG: ResourceTypeTag> {
     op: Arc<dyn Operation<M, TAG>>,

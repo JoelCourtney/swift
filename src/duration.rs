@@ -1,3 +1,5 @@
+#![doc(hidden)]
+
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign, Sum};
 use serde::{Deserialize, Serialize};
 

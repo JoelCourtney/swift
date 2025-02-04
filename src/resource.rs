@@ -1,3 +1,5 @@
+#![doc(hidden)]
+
 use crate::duration::Duration;
 use serde::{Deserialize, Serialize};
 

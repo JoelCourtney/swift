@@ -3,6 +3,14 @@ name = "swift"
 version = "0.1.0"
 edition = "2021"
 
+authors = ["Joel Courtney <joel.e.courtney@gmail.com>"]
+description = "A discrete event simulation engine similar to NASA-AMMOS's Aerie."
+readme = "README.md"
+repository = "https://github.com/JoelCourtney/swift"
+license = "MIT OR Apache-2.0"
+keywords = ["simulation"]
+categories = ["aerospace::simulation", "simulation"]
+
 [workspace]
 members = [
     "potato_sat",

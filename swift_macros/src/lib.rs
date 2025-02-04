@@ -6,6 +6,10 @@ use proc_macro::TokenStream;
 mod duration;
 mod operation;
 
+/// Used to implement the `Durative` trait with a simple expression.
+///
+/// For complex duration expressions, it will be more readable to write
+/// an explicit implementation.
 #[proc_macro_derive(Durative, attributes(duration))]
 pub fn durative(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

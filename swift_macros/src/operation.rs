@@ -109,7 +109,7 @@ fn generate_bundle(
         struct #ident;
 
         #[swift::reexports::async_trait::async_trait]
-        impl OperationBundle<#model_ident> for #ident {
+        impl swift::operation::OperationBundle<#model_ident> for #ident {
             async fn unpack(&self, time: swift::duration::Duration, timelines: &mut <#model_ident as swift::Model>::OperationTimelines) {
                 #(let #child_idents = timelines.#read_idents.last_before(time);)*
 
