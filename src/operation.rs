@@ -16,7 +16,7 @@ use crate::Model;
 pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
     async fn run(&self, history: &M::History) -> RwLockReadGuard<TAG::ResourceType>;
 
-    fn history_hash(&self) -> u64;
+    async fn history_hash(&self) -> u64;
 
     async fn find_children(&self, time: Duration, timelines: &M::OperationTimelines);
 }
@@ -64,7 +64,7 @@ impl<M: Model, TAG: ResourceTypeTag> Operation<M, TAG> for RwLock<TAG::ResourceT
         self.read().await
     }
 
-    fn history_hash(&self) -> u64 {
+    async fn history_hash(&self) -> u64 {
         SwiftDefaultHashBuilder::default().hash_one(
             bincode::serde::encode_to_vec(
                 &*(self.try_read().unwrap()),

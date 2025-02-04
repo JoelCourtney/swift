@@ -130,6 +130,7 @@ fn generate_bundle(idents: &Idents) -> TokenStream {
                     #(#child_idents: #child_idents.1.get_op(),)*
                     _swift_internal_pls_no_touch_args: self.0.clone(),
                     _swift_internal_pls_no_touch_output: None,
+                    _swift_internal_pls_no_touch_hash: None
                 }));
 
                 #(let #write_node_idents = swift::operation::OperationNode::new(op.clone(), vec![]);)*
@@ -201,6 +202,9 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         .iter()
         .map(|i| format_ident!("{i}ResourceTypeTag"));
 
+    let all_but_one_write_idents = &idents.writes[1..];
+    let first_write_ident = &idents.writes[0];
+
     let Idents {
         op,
         extras,
@@ -210,43 +214,59 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         ..
     } = idents;
 
+    let run_internal = quote! {
+        use swift::history::AsyncMap;
+
+
+
+
+        let args = &*write._swift_internal_pls_no_touch_args;
+
+        #(let #read_only_resource_idents = write.#read_only_child_idents.run(history).await;)*
+        #(let mut #write_only_resource_idents = <crate::#extras::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
+        #(let mut #read_write_resource_idents = write.#read_write_child_idents.run(history).await.clone();)*
+
+        #body
+
+        #(drop(#read_only_resource_idents);)*
+
+        write._swift_internal_pls_no_touch_output = Some(#output {
+            #(#write_idents: #all_write_resource_idents.clone(),)*
+        });
+
+        #(history.#write_idents.insert_async(hash, #all_write_resource_idents);)*
+    };
+
+    let get_history = quote! {
+        #(let #all_but_one_write_idents = history.#all_but_one_write_idents.get_async(hash).unwrap();)*
+
+        write._swift_internal_pls_no_touch_output = Some(#output {
+            #(#write_idents,)*
+        });
+    };
+
     quote! {
         struct #op {
             #(#child_idents: std::sync::Arc<dyn swift::operation::Operation<#model, crate::#extras::#child_resource_type_tag_idents>>,)*
             _swift_internal_pls_no_touch_args: std::sync::Arc<#activity>,
-            _swift_internal_pls_no_touch_output: Option<#output>
+            _swift_internal_pls_no_touch_output: Option<#output>,
+            _swift_internal_pls_no_touch_hash: Option<u64>
         }
 
         impl #op {
-            async fn run(&mut self, history: &<#model as swift::Model>::History) {
-                use swift::history::AsyncMap;
-
-                let args = &*self._swift_internal_pls_no_touch_args;
-
-                #(let #read_only_resource_idents = self.#read_only_child_idents.run(history).await;)*
-                #(let mut #write_only_resource_idents = <crate::#extras::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
-                #(let mut #read_write_resource_idents = self.#read_write_child_idents.run(history).await.clone();)*
-
-                #body
-
-                self._swift_internal_pls_no_touch_output = Some(#output {
-                    #(#write_idents: #all_write_resource_idents.clone(),)*
-                });
-
-                let hash = self.history_hash();
-                #(history.#write_idents.insert_async(hash, #all_write_resource_idents);)*
-            }
-
-            fn history_hash(&self) -> u64 {
+            async fn history_hash_internal(&mut self) -> u64 {
                 use std::hash::{Hash, BuildHasher, Hasher};
 
-                let mut state = swift::history::SwiftDefaultHashBuilder::default().build_hasher();
-
-                std::any::TypeId::of::<#op>().hash(&mut state);
-
-                #(self.#child_idents.history_hash().hash(&mut state);)*
-
-                state.finish()
+                if self._swift_internal_pls_no_touch_hash.is_some() {
+                    self._swift_internal_pls_no_touch_hash.unwrap()
+                } else {
+                    let mut state = swift::history::SwiftDefaultHashBuilder::default().build_hasher();
+                    std::any::TypeId::of::<#op>().hash(&mut state);
+                    #(self.#child_idents.history_hash().await.hash(&mut state);)*
+                    let h = state.finish();
+                    self._swift_internal_pls_no_touch_hash = Some(h);
+                    h
+                }
             }
 
             fn find_children(&mut self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {
@@ -259,14 +279,22 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
             impl swift::operation::Operation<#model, crate::#extras::#all_write_resource_type_tag_idents> for swift::reexports::tokio::sync::RwLock<#op> {
                 async fn run(&self, history: &<#model as swift::Model>::History) -> swift::reexports::tokio::sync::RwLockReadGuard<<crate::#extras::#all_write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType> {
                     if let Ok(mut write) = self.try_write() {
-                        write.run(history).await;
+                        let hash = write.history_hash_internal().await;
+                        if let Some(#first_write_ident) = history.#first_write_ident.get_async(hash) {
+                            #get_history
+                            return swift::reexports::tokio::sync::RwLockReadGuard::map(
+                                write.downgrade(),
+                                |o| &o._swift_internal_pls_no_touch_output.as_ref().unwrap().#write_idents
+                            );
+                        }
+                        #run_internal
                     }
 
                     return swift::reexports::tokio::sync::RwLockReadGuard::map(self.read().await, |o| &o._swift_internal_pls_no_touch_output.as_ref().unwrap().#write_idents);
                 }
 
-                fn history_hash(&self) -> u64 {
-                    self.try_read().unwrap().history_hash()
+                async fn history_hash(&self) -> u64 {
+                    self.write().await.history_hash_internal().await
                 }
 
                 async fn find_children(&self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {

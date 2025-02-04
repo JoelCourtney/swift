@@ -1,4 +1,3 @@
-use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
 use std::hash::{BuildHasher, Hasher};
 
@@ -10,7 +9,7 @@ pub type History<R> = DashMap<u64, R, PassThroughHashBuilder>;
 
 pub trait AsyncMap<R: Resource> {
     fn insert_async(&self, hash: u64, value: R) -> Option<R>;
-    fn get_async(&self, hash: u64) -> Option<Ref<u64, R>>;
+    fn get_async(&self, hash: u64) -> Option<R>;
 }
 
 impl<R: Resource> AsyncMap<R> for History<R> {
@@ -18,8 +17,8 @@ impl<R: Resource> AsyncMap<R> for History<R> {
         tokio::task::block_in_place(|| self.insert(hash, value))
     }
 
-    fn get_async(&self, hash: u64) -> Option<Ref<u64, R>> {
-        tokio::task::block_in_place(|| self.get(&hash))
+    fn get_async(&self, hash: u64) -> Option<R> {
+        tokio::task::block_in_place(|| self.get(&hash)).map(|r| r.value().clone())
     }
 }
 

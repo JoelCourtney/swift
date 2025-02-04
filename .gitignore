@@ -21,3 +21,6 @@ Cargo.lock
 
 # Intellij
 .idea/
+
+# Cargo flamegraph
+perf/flamegraph.svg

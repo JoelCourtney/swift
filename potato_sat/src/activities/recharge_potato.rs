@@ -1,6 +1,6 @@
 use crate::PotatoSat;
 use serde::{Deserialize, Serialize};
-use swift::{impl_activity, Activity, Duration, Durative};
+use swift::{impl_activity, Duration, Durative};
 
 #[derive(Serialize, Deserialize, Durative, Clone)]
 #[duration = "Duration(5)"]
