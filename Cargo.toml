@@ -14,7 +14,8 @@ categories = ["aerospace::simulation", "simulation"]
 [workspace]
 members = [
     "potato_sat",
-    "swift_macros"
+    "swift_macros",
+    "perf"
 ]
 
 [dependencies]

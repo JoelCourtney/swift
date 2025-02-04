@@ -207,10 +207,10 @@ macro_rules! impl_activity {
             )*
         }
     ) => {
-        impl Activity for $act {
+        impl swift::Activity for $act {
             type Model = $model;
 
-            fn decompose(self, start: Duration) -> Vec<$crate::operation::GroundedOperationBundle<$model>> {
+            fn decompose(self, start: swift::Duration) -> Vec<$crate::operation::GroundedOperationBundle<$model>> {
                 let duration = self.duration();
                 let end = start + duration;
 

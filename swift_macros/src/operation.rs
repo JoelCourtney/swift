@@ -144,7 +144,6 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     let read_idents = &idents.reads;
     let write_idents = &idents.writes;
 
-
     let read_only_idents = read_idents
         .iter()
         .filter(|i| !write_idents.contains(i))
@@ -224,9 +223,9 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
                 let args = &*self._swift_internal_pls_no_touch_args;
 
-                #(let #read_only_resource_idents = *(self.#read_only_child_idents.run(history).await);)*
+                #(let #read_only_resource_idents = self.#read_only_child_idents.run(history).await;)*
                 #(let mut #write_only_resource_idents = <crate::#extras::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
-                #(let mut #read_write_resource_idents = *(self.#read_write_child_idents.run(history).await);)*
+                #(let mut #read_write_resource_idents = self.#read_write_child_idents.run(history).await.clone();)*
 
                 #body
 
