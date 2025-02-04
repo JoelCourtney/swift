@@ -11,14 +11,19 @@ use crate::duration::Duration;
 use crate::history::SwiftDefaultHashBuilder;
 use crate::resource::ResourceTypeTag;
 use crate::Model;
+use crate::operation::ShouldSpawn::No;
 
 #[async_trait]
 pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
-    async fn run(&self) -> RwLockReadGuard<TAG::ResourceType>;
-
-    async fn history_hash(&self) -> u64;
+    async fn run(&self, should_spawn: ShouldSpawn) -> (u64, RwLockReadGuard<TAG::ResourceType>);
 
     async fn find_children(&self, time: Duration, timelines: &M::OperationTimelines);
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub enum ShouldSpawn {
+    #[default] Yes,
+    No(u16)
 }
 
 #[async_trait]
@@ -46,7 +51,7 @@ impl<M: Model, TAG: ResourceTypeTag> OperationNode<M, TAG> {
     }
 
     pub async fn run(&self) -> RwLockReadGuard<TAG::ResourceType> {
-        self.op.run().await
+        self.op.run(No(0)).await.1
     }
 
     pub fn get_op(&self) -> Arc<dyn Operation<M, TAG>> {
@@ -60,17 +65,16 @@ impl<M: Model, TAG: ResourceTypeTag> OperationNode<M, TAG> {
 
 #[async_trait]
 impl<M: Model, TAG: ResourceTypeTag> Operation<M, TAG> for RwLock<TAG::ResourceType> {
-    async fn run(&self) -> RwLockReadGuard<TAG::ResourceType> {
-        self.read().await
-    }
-
-    async fn history_hash(&self) -> u64 {
-        SwiftDefaultHashBuilder::default().hash_one(
-            bincode::serde::encode_to_vec(
-                &*(self.try_read().unwrap()),
-                bincode::config::standard(),
-            )
-            .unwrap(),
+    async fn run(&self, _should_spawn: ShouldSpawn) -> (u64, RwLockReadGuard<TAG::ResourceType>) {
+        (
+            SwiftDefaultHashBuilder::default().hash_one(
+                bincode::serde::encode_to_vec(
+                    &*(self.try_read().unwrap()),
+                    bincode::config::standard(),
+                )
+                    .unwrap(),
+            ),
+            self.read().await
         )
     }
 

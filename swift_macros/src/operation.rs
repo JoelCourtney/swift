@@ -129,9 +129,8 @@ fn generate_bundle(idents: &Idents) -> TokenStream {
                 let op = std::sync::Arc::new(swift::reexports::tokio::sync::RwLock::new(#op {
                     #(#child_idents: #child_idents.1.get_op(),)*
                     _swift_internal_pls_no_touch_args: self.0.clone(),
-                    _swift_internal_pls_no_touch_output: None,
-                    _swift_internal_pls_no_touch_history: history.clone(),
-                    _swift_internal_pls_no_touch_hash: None
+                    _swift_internal_pls_no_touch_result: None,
+                    _swift_internal_pls_no_touch_history: history.clone()
                 }));
 
                 #(let #write_node_idents = swift::operation::OperationNode::new(op.clone(), vec![]);)*
@@ -170,6 +169,19 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     let read_write_resource_idents = read_write_idents
         .iter()
         .map(|i| format_ident!("_swift_engine_resource_{i}"))
+        .collect::<Vec<_>>();
+
+    let read_only_resource_hashes = read_only_idents
+        .iter()
+        .map(|i| format_ident!("_swift_engine_resource_hash_{i}"))
+        .collect::<Vec<_>>();
+    let read_write_resource_hashes = read_write_idents
+        .iter()
+        .map(|i| format_ident!("_swift_engine_resource_hash_{i}"))
+        .collect::<Vec<_>>();
+    let all_read_resource_hashes = idents.reads
+        .iter()
+        .map(|i| format_ident!("_swift_engine_resource_hash_{i}"))
         .collect::<Vec<_>>();
 
     let all_write_resource_idents = write_idents
@@ -216,58 +228,58 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     } = idents;
 
     let run_internal = quote! {
+        let history = &write._swift_internal_pls_no_touch_history;
         let args = &*write._swift_internal_pls_no_touch_args;
 
-        #(let #read_only_resource_idents = write.#read_only_child_idents.run().await;)*
+        #(let (#read_only_resource_hashes, #read_only_resource_idents) = write.#read_only_child_idents.run(should_spawn).await;)*
         #(let mut #write_only_resource_idents = <crate::#extras::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
-        #(let mut #read_write_resource_idents = write.#read_write_child_idents.run().await.clone();)*
 
-        #body
+        #(
+            let (#read_write_resource_hashes, mut #read_write_resource_idents) = {
+                let (hash, #read_write_child_idents) = write.#read_write_child_idents.run(should_spawn).await;
+                (hash, #read_write_child_idents.clone())
+            };
+        )*
+
+        let hash = {
+            use std::hash::{Hasher, BuildHasher, Hash};
+
+            let mut state = swift::history::SwiftDefaultHashBuilder::default().build_hasher();
+            std::any::TypeId::of::<#op>().hash(&mut state);
+
+            #(#all_read_resource_hashes.hash(&mut state);)*
+
+            state.finish()
+        };
+
+        let (#(#write_idents),*) = if let Some(#first_write_ident) = history.#first_write_ident.get_async(hash) {
+            #(let #all_but_one_write_idents = history.#all_but_one_write_idents.get_async(hash).unwrap();)*
+            (#(#write_idents),*)
+        } else {
+            #body
+            #(history.#write_idents.insert_async(hash, #all_write_resource_idents.clone());)*
+            (#(#all_write_resource_idents),*)
+        };
 
         #(drop(#read_only_resource_idents);)*
 
-        write._swift_internal_pls_no_touch_output = Some(#output {
-            #(#write_idents: #all_write_resource_idents.clone(),)*
-        });
-
-        #(history.#write_idents.insert_async(hash, #all_write_resource_idents);)*
-    };
-
-    let get_history = quote! {
-        #(let #all_but_one_write_idents = history.#all_but_one_write_idents.get_async(hash).unwrap();)*
-
-        write._swift_internal_pls_no_touch_output = Some(#output {
-            #(#write_idents,)*
-        });
+        write._swift_internal_pls_no_touch_result = Some((
+            hash,
+            #output {
+                #(#write_idents,)*
+            }
+        ));
     };
 
     quote! {
         struct #op {
             #(#child_idents: std::sync::Arc<dyn swift::operation::Operation<#model, crate::#extras::#child_resource_type_tag_idents>>,)*
             _swift_internal_pls_no_touch_args: std::sync::Arc<#activity>,
-            _swift_internal_pls_no_touch_output: Option<#output>,
             _swift_internal_pls_no_touch_history: std::sync::Arc<<#model as swift::Model>::History>,
-            _swift_internal_pls_no_touch_hash: Option<u64>
+            _swift_internal_pls_no_touch_result: Option<(u64, #output)>
         }
 
         impl #op {
-            async fn history_hash_internal(&mut self) -> u64 {
-                use std::hash::{Hash, BuildHasher, Hasher};
-
-                if self._swift_internal_pls_no_touch_hash.is_some() {
-                    self._swift_internal_pls_no_touch_hash.unwrap()
-                } else {
-                    let mut state = swift::history::SwiftDefaultHashBuilder::default().build_hasher();
-                    std::any::TypeId::of::<#op>().hash(&mut state);
-
-                    #(self.#child_idents.history_hash().await.hash(&mut state);)*
-
-                    let h = state.finish();
-                    self._swift_internal_pls_no_touch_hash = Some(h);
-                    h
-                }
-            }
-
             fn find_children(&mut self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {
                 #(self.#child_idents = timelines.#read_idents.last_before(time).1.get_op();)*
             }
@@ -276,14 +288,13 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         #(
             #[swift::reexports::async_trait::async_trait]
             impl swift::operation::Operation<#model, crate::#extras::#all_write_resource_type_tag_idents> for swift::reexports::tokio::sync::RwLock<#op> {
-                async fn run(&self) -> swift::reexports::tokio::sync::RwLockReadGuard<<crate::#extras::#all_write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType> {
+                async fn run(&self, should_spawn: swift::operation::ShouldSpawn) -> (u64, swift::reexports::tokio::sync::RwLockReadGuard<<crate::#extras::#all_write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType>) {
                     use swift::history::AsyncMap;
+                    // If you (the thread) can get the write lock on the node, then you are responsible
+                    // for calculating the hash and value if they aren't present.
+                    // Otherwise, wait for a read lock and return the cached results.
                     let read = if let Ok(mut write) = self.try_write() {
-                        let history = write._swift_internal_pls_no_touch_history.clone();
-                        let hash = write.history_hash_internal().await;
-                        if let Some(#first_write_ident) = history.#first_write_ident.get_async(hash) {
-                            #get_history
-                        } else {
+                        if write._swift_internal_pls_no_touch_result.is_none() {
                             #run_internal
                         }
                         write.downgrade()
@@ -291,11 +302,10 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
                         self.read().await
                     };
 
-                    swift::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o._swift_internal_pls_no_touch_output.as_ref().unwrap().#write_idents)
-                }
-
-                async fn history_hash(&self) -> u64 {
-                    self.write().await.history_hash_internal().await
+                    (
+                        read._swift_internal_pls_no_touch_result.as_ref().unwrap().0,
+                        swift::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o._swift_internal_pls_no_touch_result.as_ref().unwrap().1.#write_idents)
+                    )
                 }
 
                 async fn find_children(&self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {
