@@ -161,7 +161,7 @@ macro_rules! model {
 /// #        my_string: String
 /// #    }
 /// # }
-/// # #[derive(Serialize, Deserialize, Durative)]
+/// # #[derive(Serialize, Deserialize, Durative, Clone)]
 /// # #[duration = "Duration(5)"]
 /// # pub struct MyActivity {
 /// #     pub my_argument: f32,

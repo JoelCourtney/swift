@@ -41,17 +41,27 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
     let op_ident = format_ident!("{activity}Op_{uuid}");
     let output_ident = format_ident!("{activity}OpOutput_{uuid}");
 
-    let reads = reads.into_iter().collect::<Vec<_>>();
-    let writes = writes.into_iter().collect::<Vec<_>>();
+    let reads = reads
+        .into_iter()
+        .map(|s| format_ident!("{s}"))
+        .collect::<Vec<_>>();
+    let writes = writes
+        .into_iter()
+        .map(|s| format_ident!("{s}"))
+        .collect::<Vec<_>>();
 
-    let bundle = generate_bundle(
-        bundle_ident.clone(),
-        activity_ident.clone(),
-        op_ident.clone(),
-        model_ident.clone(),
-        &reads,
-        &writes,
-    );
+    let idents = Idents {
+        activity: activity_ident,
+        op: op_ident,
+        bundle: bundle_ident.clone(),
+        output: output_ident,
+        model: model_ident,
+        extras: extras_module_ident,
+        reads,
+        writes,
+    };
+
+    let bundle = generate_bundle(&idents);
 
     let operation_body: TokenStream = any_pat
         .replace_all(&input, |caps: &Captures| {
@@ -60,18 +70,9 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
         .to_string()
         .parse()
         .expect("could not parse after replacing");
-    let op = generate_operation(
-        op_ident,
-        activity_ident,
-        output_ident.clone(),
-        model_ident.clone(),
-        extras_module_ident.clone(),
-        &reads,
-        &writes,
-        operation_body,
-    );
+    let op = generate_operation(&idents, operation_body);
 
-    let output_struct = generate_output(output_ident, extras_module_ident, &writes);
+    let output_struct = generate_output(&idents);
 
     quote! {
         {
@@ -83,41 +84,49 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
     }
 }
 
-fn generate_bundle(
-    ident: Ident,
-    activity_ident: Ident,
-    op_ident: Ident,
-    model_ident: Ident,
-    reads: &Vec<&str>,
-    writes: &Vec<&str>,
-) -> TokenStream {
-    let read_idents = reads
-        .iter()
-        .map(|r| format_ident!("{r}"))
-        .collect::<Vec<_>>();
-    let write_idents = writes
-        .iter()
-        .map(|r| format_ident!("{r}"))
-        .collect::<Vec<_>>();
+struct Idents {
+    activity: Ident,
+    op: Ident,
+    bundle: Ident,
+    output: Ident,
+    model: Ident,
+    extras: Ident,
+    reads: Vec<Ident>,
+    writes: Vec<Ident>,
+}
 
-    let child_idents = reads
+fn generate_bundle(idents: &Idents) -> TokenStream {
+    let read_idents = &idents.reads;
+    let write_idents = &idents.writes;
+
+    let child_idents = idents
+        .reads
         .iter()
         .map(|r| format_ident!("_swift_internal_pls_no_touch_{r}_child"))
         .collect::<Vec<_>>();
-    let write_node_idents = writes
+    let write_node_idents = idents
+        .writes
         .iter()
         .map(|r| format_ident!("{r}_write_node"))
         .collect::<Vec<_>>();
 
+    let Idents {
+        bundle,
+        activity,
+        model,
+        op,
+        ..
+    } = &idents;
+
     quote! {
-        struct #ident(std::sync::Arc<#activity_ident>);
+        struct #bundle(std::sync::Arc<#activity>);
 
         #[swift::reexports::async_trait::async_trait]
-        impl swift::operation::OperationBundle<#model_ident> for #ident {
-            async fn unpack(&self, time: swift::duration::Duration, timelines: &mut <#model_ident as swift::Model>::OperationTimelines) {
+        impl swift::operation::OperationBundle<#model> for #bundle {
+            async fn unpack(&self, time: swift::duration::Duration, timelines: &mut <#model as swift::Model>::OperationTimelines) {
                 #(let #child_idents = timelines.#read_idents.last_before(time);)*
 
-                let op = std::sync::Arc::new(swift::reexports::tokio::sync::RwLock::new(#op_ident {
+                let op = std::sync::Arc::new(swift::reexports::tokio::sync::RwLock::new(#op {
                     #(#child_idents: #child_idents.1.get_op(),)*
                     _swift_internal_pls_no_touch_args: self.0.clone(),
                     _swift_internal_pls_no_touch_output: None,
@@ -131,24 +140,10 @@ fn generate_bundle(
     }
 }
 
-fn generate_operation(
-    op_ident: Ident,
-    activity_ident: Ident,
-    output_ident: Ident,
-    model_ident: Ident,
-    extras_module_ident: Ident,
-    reads: &Vec<&str>,
-    writes: &Vec<&str>,
-    body: TokenStream,
-) -> TokenStream {
-    let read_idents = reads
-        .iter()
-        .map(|r| format_ident!("{r}"))
-        .collect::<Vec<_>>();
-    let write_idents = writes
-        .iter()
-        .map(|r| format_ident!("{r}"))
-        .collect::<Vec<_>>();
+fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
+    let read_idents = &idents.reads;
+    let write_idents = &idents.writes;
+
 
     let read_only_idents = read_idents
         .iter()
@@ -181,7 +176,8 @@ fn generate_operation(
         .map(|i| format_ident!("_swift_engine_resource_{i}"))
         .collect::<Vec<_>>();
 
-    let child_idents = reads
+    let child_idents = idents
+        .reads
         .iter()
         .map(|r| format_ident!("_swift_internal_pls_no_touch_{r}_child"))
         .collect::<Vec<_>>();
@@ -195,7 +191,10 @@ fn generate_operation(
         .map(|r| format_ident!("_swift_internal_pls_no_touch_{r}_child"))
         .collect::<Vec<_>>();
 
-    let child_resource_type_tag_idents = reads.iter().map(|r| format_ident!("{r}ResourceTypeTag"));
+    let child_resource_type_tag_idents = idents
+        .reads
+        .iter()
+        .map(|r| format_ident!("{r}ResourceTypeTag"));
     let write_only_resource_type_tag_idents = write_only_idents
         .iter()
         .map(|i| format_ident!("{i}ResourceTypeTag"));
@@ -203,26 +202,35 @@ fn generate_operation(
         .iter()
         .map(|i| format_ident!("{i}ResourceTypeTag"));
 
+    let Idents {
+        op,
+        extras,
+        model,
+        activity,
+        output,
+        ..
+    } = idents;
+
     quote! {
-        struct #op_ident {
-            #(#child_idents: std::sync::Arc<dyn swift::operation::Operation<#model_ident, crate::#extras_module_ident::#child_resource_type_tag_idents>>,)*
-            _swift_internal_pls_no_touch_args: std::sync::Arc<#activity_ident>,
-            _swift_internal_pls_no_touch_output: Option<#output_ident>
+        struct #op {
+            #(#child_idents: std::sync::Arc<dyn swift::operation::Operation<#model, crate::#extras::#child_resource_type_tag_idents>>,)*
+            _swift_internal_pls_no_touch_args: std::sync::Arc<#activity>,
+            _swift_internal_pls_no_touch_output: Option<#output>
         }
 
-        impl #op_ident {
-            async fn run(&mut self, history: &<#model_ident as swift::Model>::History) {
+        impl #op {
+            async fn run(&mut self, history: &<#model as swift::Model>::History) {
                 use swift::history::AsyncMap;
 
                 let args = &*self._swift_internal_pls_no_touch_args;
 
                 #(let #read_only_resource_idents = *(self.#read_only_child_idents.run(history).await);)*
-                #(let mut #write_only_resource_idents = <crate::#extras_module_ident::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
+                #(let mut #write_only_resource_idents = <crate::#extras::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
                 #(let mut #read_write_resource_idents = *(self.#read_write_child_idents.run(history).await);)*
 
                 #body
 
-                self._swift_internal_pls_no_touch_output = Some(#output_ident {
+                self._swift_internal_pls_no_touch_output = Some(#output {
                     #(#write_idents: #all_write_resource_idents.clone(),)*
                 });
 
@@ -235,22 +243,22 @@ fn generate_operation(
 
                 let mut state = swift::history::SwiftDefaultHashBuilder::default().build_hasher();
 
-                std::any::TypeId::of::<#op_ident>().hash(&mut state);
+                std::any::TypeId::of::<#op>().hash(&mut state);
 
                 #(self.#child_idents.history_hash().hash(&mut state);)*
 
                 state.finish()
             }
 
-            fn find_children(&mut self, time: swift::duration::Duration, timelines: &<#model_ident as swift::Model>::OperationTimelines) {
+            fn find_children(&mut self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {
                 #(self.#child_idents = timelines.#read_idents.last_before(time).1.get_op();)*
             }
         }
 
         #(
             #[swift::reexports::async_trait::async_trait]
-            impl swift::operation::Operation<#model_ident, crate::#extras_module_ident::#all_write_resource_type_tag_idents> for swift::reexports::tokio::sync::RwLock<#op_ident> {
-                async fn run(&self, history: &<#model_ident as swift::Model>::History) -> swift::reexports::tokio::sync::RwLockReadGuard<<crate::#extras_module_ident::#all_write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType> {
+            impl swift::operation::Operation<#model, crate::#extras::#all_write_resource_type_tag_idents> for swift::reexports::tokio::sync::RwLock<#op> {
+                async fn run(&self, history: &<#model as swift::Model>::History) -> swift::reexports::tokio::sync::RwLockReadGuard<<crate::#extras::#all_write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType> {
                     if let Ok(mut write) = self.try_write() {
                         write.run(history).await;
                     }
@@ -262,7 +270,7 @@ fn generate_operation(
                     self.try_read().unwrap().history_hash()
                 }
 
-                async fn find_children(&self, time: swift::duration::Duration, timelines: &<#model_ident as swift::Model>::OperationTimelines) {
+                async fn find_children(&self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {
                     self.write().await.find_children(time, timelines);
                 }
             }
@@ -270,15 +278,16 @@ fn generate_operation(
     }
 }
 
-fn generate_output(output_ident: Ident, extras_module_ident: Ident, writes: &Vec<&str>) -> TokenStream {
-    let write_idents = writes
+fn generate_output(idents: &Idents) -> TokenStream {
+    let write_idents = &idents.writes;
+    let write_resource_type_tag_idents = idents
+        .writes
         .iter()
-        .map(|r| format_ident!("{r}"))
-        .collect::<Vec<_>>();
-    let write_resource_type_tag_idents = writes.iter().map(|r| format_ident!("{r}ResourceTypeTag"));
+        .map(|r| format_ident!("{r}ResourceTypeTag"));
+    let Idents { output, extras, .. } = idents;
     quote! {
-        struct #output_ident {
-            #(#write_idents: <crate::#extras_module_ident::#write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType,)*
+        struct #output {
+            #(#write_idents: <crate::#extras::#write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType,)*
         }
     }
 }

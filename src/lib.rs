@@ -35,6 +35,14 @@ impl<M: Model> Default for Session<M> {
     }
 }
 
+impl<M: Model> Session<M> {
+    pub async fn add(&mut self, start: Duration, activity: impl Activity<Model = M>) {
+        for trigger in activity.decompose(start) {
+            trigger.1.unpack(trigger.0, &mut self.op_timelines).await
+        }
+    }
+}
+
 /// The trait that all models implement.
 ///
 /// Do not implement manually. Use the [model] macro.
@@ -42,14 +50,6 @@ pub trait Model: Sized {
     type History: Default;
     type OperationTimelines: Default;
     type State: Default;
-}
-
-impl<M: Model> Session<M> {
-    pub async fn add(&mut self, start: Duration, activity: impl Activity<Model = M>) {
-        for trigger in activity.decompose(start) {
-            trigger.1.unpack(trigger.0, &mut self.op_timelines).await
-        }
-    }
 }
 
 /// The trait that all activities implement.

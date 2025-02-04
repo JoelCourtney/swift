@@ -29,9 +29,7 @@ impl Resource for OperatingMode {
 #[tokio::main]
 async fn main() {
     let mut session = Session::<PotatoSat>::default();
-    session
-        .add(Duration(1), RechargePotato { amount: 5 })
-        .await;
+    session.add(Duration(1), RechargePotato { amount: 5 }).await;
 
     let battery = &*session
         .op_timelines
@@ -51,5 +49,3 @@ async fn main() {
 
     dbg!(battery, temperature);
 }
-
-
