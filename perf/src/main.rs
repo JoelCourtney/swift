@@ -46,7 +46,7 @@ impl_activity! {
 async fn main() {
     let mut session = Session::<Perf>::default();
 
-    for i in 1..10000 {
+    for i in 1..1000000 {
         session.add(Duration(3 * i), IncrementA).await;
         session.add(Duration(3 * i + 1), ConvertAToB).await;
         session.add(Duration(3 * i + 2), ConvertBToA).await;

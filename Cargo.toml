@@ -1,30 +1,12 @@
-[package]
-name = "swift"
-version = "0.1.0"
-edition = "2021"
-
-authors = ["Joel Courtney <joel.e.courtney@gmail.com>"]
-description = "A discrete event simulation engine similar to NASA-AMMOS's Aerie."
-readme = "README.md"
-repository = "https://github.com/JoelCourtney/swift"
-license = "MIT OR Apache-2.0"
-keywords = ["simulation"]
-categories = ["aerospace::simulation", "simulation"]
-
 [workspace]
 members = [
+    "swift",
     "potato_sat",
     "swift_macros",
     "perf"
 ]
+default-members = [
+    "swift", "perf", "potato_sat"
+]
 
-[dependencies]
-serde = { version = "1.0.210", features = ["derive"] }
-derive_more = { version = "2.0.1", features = ["full"] }
-async-trait = "0.1.86"
-tokio = { version = "1.43.0", features = ["full"] }
-tokio-macros = { version = "2.5.0" }
-bincode = { version = "2.0.0-rc.3", features = ["serde"] }
-swift_macros = { path = "./swift_macros" }
-dashmap = "6.1.0"
-foldhash = "0.1.4"
+resolver = "2"

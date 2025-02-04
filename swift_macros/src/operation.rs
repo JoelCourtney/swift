@@ -179,7 +179,8 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         .iter()
         .map(|i| format_ident!("_swift_engine_resource_hash_{i}"))
         .collect::<Vec<_>>();
-    let all_read_resource_hashes = idents.reads
+    let all_read_resource_hashes = idents
+        .reads
         .iter()
         .map(|i| format_ident!("_swift_engine_resource_hash_{i}"))
         .collect::<Vec<_>>();
@@ -228,15 +229,17 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     } = idents;
 
     let run_internal = quote! {
-        let history = &write._swift_internal_pls_no_touch_history;
-        let args = &*write._swift_internal_pls_no_touch_args;
+        let history = &op_internal._swift_internal_pls_no_touch_history;
+        let args = &*op_internal._swift_internal_pls_no_touch_args;
 
-        #(let (#read_only_resource_hashes, #read_only_resource_idents) = write.#read_only_child_idents.run(should_spawn).await;)*
+        let children_should_spawn = should_spawn.increment();
+
+        #(let (#read_only_resource_hashes, #read_only_resource_idents) = op_internal.#read_only_child_idents.run(children_should_spawn).await;)*
         #(let mut #write_only_resource_idents = <crate::#extras::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
 
         #(
             let (#read_write_resource_hashes, mut #read_write_resource_idents) = {
-                let (hash, #read_write_child_idents) = write.#read_write_child_idents.run(should_spawn).await;
+                let (hash, #read_write_child_idents) = op_internal.#read_write_child_idents.run(children_should_spawn).await;
                 (hash, #read_write_child_idents.clone())
             };
         )*
@@ -263,15 +266,16 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
         #(drop(#read_only_resource_idents);)*
 
-        write._swift_internal_pls_no_touch_result = Some((
+        Some((
             hash,
             #output {
                 #(#write_idents,)*
             }
-        ));
+        ))
     };
 
     quote! {
+        #[derive(Clone)]
         struct #op {
             #(#child_idents: std::sync::Arc<dyn swift::operation::Operation<#model, crate::#extras::#child_resource_type_tag_idents>>,)*
             _swift_internal_pls_no_touch_args: std::sync::Arc<#activity>,
@@ -295,9 +299,20 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
                     // Otherwise, wait for a read lock and return the cached results.
                     let read = if let Ok(mut write) = self.try_write() {
                         if write._swift_internal_pls_no_touch_result.is_none() {
-                            #run_internal
+                            let result = if should_spawn == swift::operation::ShouldSpawn::Yes {
+                                let op_internal = write.clone();
+                                swift::reexports::tokio::task::spawn(async move {
+                                    #run_internal
+                                }).await.unwrap()
+                            } else {
+                                let op_internal = &write;
+                                #run_internal
+                            };
+                            write._swift_internal_pls_no_touch_result = result;
+                            write.downgrade()
+                        } else {
+                            write.downgrade()
                         }
-                        write.downgrade()
                     } else {
                         self.read().await
                     };
@@ -324,6 +339,7 @@ fn generate_output(idents: &Idents) -> TokenStream {
         .map(|r| format_ident!("{r}ResourceTypeTag"));
     let Idents { output, extras, .. } = idents;
     quote! {
+        #[derive(Clone)]
         struct #output {
             #(#write_idents: <crate::#extras::#write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType,)*
         }

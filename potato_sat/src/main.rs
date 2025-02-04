@@ -31,13 +31,7 @@ async fn main() {
     let mut session = Session::<PotatoSat>::default();
     session.add(Duration(1), RechargePotato { amount: 5 }).await;
 
-    let battery = &*session
-        .op_timelines
-        .battery
-        .last()
-        .run()
-        .await
-        .to_string();
+    let battery = &*session.op_timelines.battery.last().run().await.to_string();
 
     let temperature = &*session
         .op_timelines

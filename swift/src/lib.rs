@@ -5,8 +5,8 @@
 //!
 //! (WIP) See [Session], [model] and [impl_activity] for details.
 
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use crate::operation::GroundedOperationBundle;
 
@@ -39,7 +39,10 @@ impl<M: Model> Default for Session<M> {
 impl<M: Model> Session<M> {
     pub async fn add(&mut self, start: Duration, activity: impl Activity<Model = M>) {
         for trigger in activity.decompose(start) {
-            trigger.1.unpack(trigger.0, &mut self.op_timelines, self.history.clone()).await
+            trigger
+                .1
+                .unpack(trigger.0, &mut self.op_timelines, self.history.clone())
+                .await
         }
     }
 }

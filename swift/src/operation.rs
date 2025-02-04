@@ -9,9 +9,9 @@ use tokio::sync::{RwLock, RwLockReadGuard};
 
 use crate::duration::Duration;
 use crate::history::SwiftDefaultHashBuilder;
+use crate::operation::ShouldSpawn::{No, Yes};
 use crate::resource::ResourceTypeTag;
 use crate::Model;
-use crate::operation::ShouldSpawn::No;
 
 #[async_trait]
 pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
@@ -20,15 +20,34 @@ pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
     async fn find_children(&self, time: Duration, timelines: &M::OperationTimelines);
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialOrd, PartialEq)]
 pub enum ShouldSpawn {
-    #[default] Yes,
-    No(u16)
+    #[default]
+    Yes,
+    No(u16),
+}
+
+impl ShouldSpawn {
+    pub const STACK_LIMIT: u16 = 1000;
+
+    pub fn increment(self) -> Self {
+        match self {
+            Yes => No(0),
+            No(n) if n < Self::STACK_LIMIT => No(n + 1),
+            No(Self::STACK_LIMIT) => Yes,
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[async_trait]
 pub trait OperationBundle<M: Model> {
-    async fn unpack(&self, time: Duration, timelines: &mut M::OperationTimelines, history: Arc<M::History>);
+    async fn unpack(
+        &self,
+        time: Duration,
+        timelines: &mut M::OperationTimelines,
+        history: Arc<M::History>,
+    );
 }
 
 pub type GroundedOperationBundle<M> = (Duration, Box<dyn OperationBundle<M>>);
@@ -72,9 +91,9 @@ impl<M: Model, TAG: ResourceTypeTag> Operation<M, TAG> for RwLock<TAG::ResourceT
                     &*(self.try_read().unwrap()),
                     bincode::config::standard(),
                 )
-                    .unwrap(),
+                .unwrap(),
             ),
-            self.read().await
+            self.read().await,
         )
     }
 
