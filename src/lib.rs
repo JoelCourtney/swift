@@ -1,33 +1,27 @@
-use std::future::Future;
-use std::hash::{Hash, Hasher};
-
 use serde::{Deserialize, Serialize};
-use serde::de::DeserializeOwned;
 
 use crate::duration::{Duration, Durative};
 use crate::operation::OperationBundle;
-use crate::resource::Resource;
 
 pub mod duration;
-mod example;
-pub mod resource;
 pub mod history;
-pub mod operation;
 pub mod macros;
+pub mod operation;
 pub mod reexports;
+pub mod resource;
 
 pub use swift_macros::Durative;
 
 pub struct Session<M: Model> {
     pub history: M::History,
-    pub op_timelines: M::OperationTimelines
+    pub op_timelines: M::OperationTimelines,
 }
 
 impl<M: Model> Default for Session<M> {
     fn default() -> Self {
         Session {
             history: M::History::default(),
-            op_timelines: M::OperationTimelines::default()
+            op_timelines: M::OperationTimelines::default(),
         }
     }
 }
@@ -38,15 +32,17 @@ pub trait Model: Sized {
 }
 
 impl<M: Model> Session<M> {
-    pub async fn add(&mut self, start: Duration, activity: impl Activity<Model=M>) {
+    pub async fn add(&mut self, start: Duration, activity: impl Activity<Model = M>) {
         for trigger in activity.decompose(start) {
             trigger.1.unpack(trigger.0, &mut self.op_timelines).await
         }
     }
 }
 
+pub type GroundedOperationBundle<M> = (Duration, Box<dyn OperationBundle<M>>);
+
 pub trait Activity: Durative + Serialize + for<'a> Deserialize<'a> {
     type Model: Model;
 
-    fn decompose(self, start: Duration) -> Vec<(Duration, Box<dyn OperationBundle<Self::Model>>)>;
+    fn decompose(self, start: Duration) -> Vec<GroundedOperationBundle<Self::Model>>;
 }

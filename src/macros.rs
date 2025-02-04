@@ -13,6 +13,7 @@ macro_rules! model {
         $model_vis struct $model;
 
         $crate::reexports::swift_macros::extras_module! {
+            #[allow(non_snake_case)]
             $model_vis mod $model {
                 use super::*;
 
@@ -74,7 +75,7 @@ macro_rules! impl_activity {
         impl Activity for $act {
             type Model = $model;
 
-            fn decompose(self, start: Duration) -> Vec<(Duration, Box<dyn OperationBundle<$model>>)> {
+            fn decompose(self, start: Duration) -> Vec<$crate::GroundedOperationBundle<$model>> {
                 let duration = self.duration();
                 let end = start + duration;
 

@@ -7,14 +7,15 @@ pub fn duration(input: DeriveInput) -> TokenStream {
 
     for attr in input.attrs {
         match attr.meta {
-            Meta::NameValue(nv) if nv.path.is_ident("duration") => {
-                match nv.value {
-                    syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => {
-                        duration = s.parse().unwrap();
-                    }
-                    _ => panic!("duration attribute must be a string")
+            Meta::NameValue(nv) if nv.path.is_ident("duration") => match nv.value {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) => {
+                    duration = s.parse().unwrap();
                 }
-            }
+                _ => panic!("duration attribute must be a string"),
+            },
             _ => {}
         }
     }

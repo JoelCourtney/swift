@@ -1,8 +1,9 @@
-use std::hash::Hash;
-use serde::{Deserialize, Serialize};
 use crate::duration::Duration;
+use serde::{Deserialize, Serialize};
 
-pub trait Resource: 'static + Default + Send + Sync + Serialize + for<'a> Deserialize<'a> + Clone {
+pub trait Resource:
+    'static + Default + Send + Sync + Serialize + for<'a> Deserialize<'a> + Clone
+{
     const PIECEWISE_CONSTANT: bool;
 }
 

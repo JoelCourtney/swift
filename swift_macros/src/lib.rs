@@ -1,5 +1,5 @@
-use quote::{format_ident, quote, ToTokens};
-use syn::{parse_macro_input, DeriveInput, Item, ItemTrait, Path, Token, TraitItem};
+use quote::{format_ident, quote};
+use syn::{parse_macro_input, DeriveInput, Item};
 
 use proc_macro::TokenStream;
 
@@ -32,9 +32,8 @@ pub fn extras_module(input: TokenStream) -> TokenStream {
             m.ident = format_ident!("{}_extras_module", m.ident);
             quote! { #m }
         }
-        _ => unreachable!()
+        _ => unreachable!(),
     };
-
 
     stream.into()
 }

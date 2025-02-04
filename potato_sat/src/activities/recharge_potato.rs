@@ -1,13 +1,13 @@
+use crate::PotatoSat;
 use serde::{Deserialize, Serialize};
-use swift::{Activity, Durative, impl_activity};
 use swift::duration::{Duration, Durative};
 use swift::operation::OperationBundle;
-use crate::PotatoSat;
+use swift::{impl_activity, Activity, Durative};
 
 #[derive(Serialize, Deserialize, Durative)]
 #[duration = "Duration(5)"]
 pub struct RechargePotato {
-    pub amount: f32
+    pub amount: f32,
 }
 
 impl_activity! {

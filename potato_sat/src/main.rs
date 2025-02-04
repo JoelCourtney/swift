@@ -1,11 +1,11 @@
 mod activities;
 
+use crate::activities::recharge_potato::RechargePotato;
 use serde::{Deserialize, Serialize};
-use swift::resource::Resource;
-use swift::{model, Session};
 use swift::duration::Duration;
 use swift::reexports::tokio;
-use crate::activities::recharge_potato::RechargePotato;
+use swift::resource::Resource;
+use swift::{model, Session};
 
 model! {
     pub struct PotatoSat {
@@ -20,7 +20,7 @@ model! {
 pub enum OperatingMode {
     #[default]
     Nominal,
-    Safe(String)
+    Safe(String),
 }
 
 impl Resource for OperatingMode {
@@ -30,8 +30,16 @@ impl Resource for OperatingMode {
 #[tokio::main]
 async fn main() {
     let mut session = Session::<PotatoSat>::default();
-    session.add(Duration(1), RechargePotato { amount: 1.0 }).await;
+    session
+        .add(Duration(1), RechargePotato { amount: 1.0 })
+        .await;
 
-    let battery = &*session.op_timelines.battery.last().run(&session.history).await.to_string();
+    let battery = &*session
+        .op_timelines
+        .battery
+        .last()
+        .run(&session.history)
+        .await
+        .to_string();
     dbg!(battery);
 }

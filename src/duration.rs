@@ -3,17 +3,26 @@ use serde::{Deserialize, Serialize};
 
 #[repr(transparent)]
 #[derive(
-    Copy, Clone,
+    Copy,
+    Clone,
     Debug,
     Default,
-    Serialize, Deserialize,
-    Ord, PartialOrd,
-    Eq, PartialEq,
+    Serialize,
+    Deserialize,
+    Ord,
+    PartialOrd,
+    Eq,
+    PartialEq,
     Neg,
-    Add, AddAssign, Sum,
-    Sub, SubAssign,
-    Mul, MulAssign,
-    Div, DivAssign
+    Add,
+    AddAssign,
+    Sum,
+    Sub,
+    SubAssign,
+    Mul,
+    MulAssign,
+    Div,
+    DivAssign,
 )]
 pub struct Duration(pub i64);
 
