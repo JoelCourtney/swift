@@ -14,7 +14,7 @@ use crate::Model;
 
 #[async_trait]
 pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
-    async fn run(&self, history: &M::History) -> RwLockReadGuard<TAG::ResourceType>;
+    async fn run(&self) -> RwLockReadGuard<TAG::ResourceType>;
 
     async fn history_hash(&self) -> u64;
 
@@ -23,7 +23,7 @@ pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
 
 #[async_trait]
 pub trait OperationBundle<M: Model> {
-    async fn unpack(&self, time: Duration, timelines: &mut M::OperationTimelines);
+    async fn unpack(&self, time: Duration, timelines: &mut M::OperationTimelines, history: Arc<M::History>);
 }
 
 pub type GroundedOperationBundle<M> = (Duration, Box<dyn OperationBundle<M>>);
@@ -45,8 +45,8 @@ impl<M: Model, TAG: ResourceTypeTag> OperationNode<M, TAG> {
         }
     }
 
-    pub async fn run(&self, history: &M::History) -> RwLockReadGuard<TAG::ResourceType> {
-        self.op.run(history).await
+    pub async fn run(&self) -> RwLockReadGuard<TAG::ResourceType> {
+        self.op.run().await
     }
 
     pub fn get_op(&self) -> Arc<dyn Operation<M, TAG>> {
@@ -60,7 +60,7 @@ impl<M: Model, TAG: ResourceTypeTag> OperationNode<M, TAG> {
 
 #[async_trait]
 impl<M: Model, TAG: ResourceTypeTag> Operation<M, TAG> for RwLock<TAG::ResourceType> {
-    async fn run(&self, _history: &M::History) -> RwLockReadGuard<TAG::ResourceType> {
+    async fn run(&self) -> RwLockReadGuard<TAG::ResourceType> {
         self.read().await
     }
 

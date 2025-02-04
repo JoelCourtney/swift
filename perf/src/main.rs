@@ -52,21 +52,13 @@ async fn main() {
         session.add(Duration(3 * i + 2), ConvertBToA).await;
     }
 
-    let a = &*session
-        .op_timelines
-        .a
-        .last()
-        .run(&session.history)
-        .await
-        .to_string();
+    let a = &*session.op_timelines.a.last().run().await.to_string();
 
-    let b = &*session
-        .op_timelines
-        .b
-        .last()
-        .run(&session.history)
-        .await
-        .to_string();
+    let b = &*session.op_timelines.b.last().run().await.to_string();
 
     dbg!(a, b);
+
+    drop(session);
+
+    println!("hi");
 }

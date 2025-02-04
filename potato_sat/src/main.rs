@@ -35,7 +35,7 @@ async fn main() {
         .op_timelines
         .battery
         .last()
-        .run(&session.history)
+        .run()
         .await
         .to_string();
 
@@ -43,7 +43,7 @@ async fn main() {
         .op_timelines
         .temperature
         .last()
-        .run(&session.history)
+        .run()
         .await
         .to_string();
 

@@ -5,6 +5,7 @@
 //!
 //! (WIP) See [Session], [model] and [impl_activity] for details.
 
+use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::operation::GroundedOperationBundle;
@@ -22,14 +23,14 @@ pub use swift_macros::Durative;
 
 /// An interactive session with cached simulation history and lazy evaluation.
 pub struct Session<M: Model> {
-    pub history: M::History,
+    pub history: Arc<M::History>,
     pub op_timelines: M::OperationTimelines,
 }
 
 impl<M: Model> Default for Session<M> {
     fn default() -> Self {
         Session {
-            history: M::History::default(),
+            history: Arc::new(M::History::default()),
             op_timelines: M::OperationTimelines::default(),
         }
     }
@@ -38,7 +39,7 @@ impl<M: Model> Default for Session<M> {
 impl<M: Model> Session<M> {
     pub async fn add(&mut self, start: Duration, activity: impl Activity<Model = M>) {
         for trigger in activity.decompose(start) {
-            trigger.1.unpack(trigger.0, &mut self.op_timelines).await
+            trigger.1.unpack(trigger.0, &mut self.op_timelines, self.history.clone()).await
         }
     }
 }
