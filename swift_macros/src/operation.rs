@@ -127,7 +127,7 @@ fn generate_bundle(idents: &Idents) -> TokenStream {
                 #(let #child_idents = timelines.#read_idents.last_before(time);)*
 
                 let op = std::sync::Arc::new(swift::reexports::tokio::sync::RwLock::new(#op {
-                    #(#child_idents: #child_idents.1.get_op(),)*
+                    #(#child_idents: #child_idents.1.get_op_weak(),)*
                     _swift_internal_pls_no_touch_args: self.0.clone(),
                     _swift_internal_pls_no_touch_result: None,
                     _swift_internal_pls_no_touch_history: history.clone()
@@ -234,12 +234,20 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
         let children_should_spawn = should_spawn.increment();
 
-        #(let (#read_only_resource_hashes, #read_only_resource_idents) = op_internal.#read_only_child_idents.run(children_should_spawn).await;)*
+        #(let #read_only_child_idents = op_internal.#read_only_child_idents.upgrade().unwrap();)*
+        #(let #read_write_child_idents = op_internal.#read_write_child_idents.upgrade().unwrap();)*
+
+        #(let (#read_only_resource_hashes, #read_only_resource_idents) = #read_only_child_idents
+                .run(children_should_spawn)
+                .await;
+        )*
         #(let mut #write_only_resource_idents = <crate::#extras::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
 
         #(
             let (#read_write_resource_hashes, mut #read_write_resource_idents) = {
-                let (hash, #read_write_child_idents) = op_internal.#read_write_child_idents.run(children_should_spawn).await;
+                let (hash, #read_write_child_idents) = #read_write_child_idents
+                    .run(children_should_spawn)
+                    .await;
                 (hash, #read_write_child_idents.clone())
             };
         )*
@@ -277,7 +285,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     quote! {
         #[derive(Clone)]
         struct #op {
-            #(#child_idents: std::sync::Arc<dyn swift::operation::Operation<#model, crate::#extras::#child_resource_type_tag_idents>>,)*
+            #(#child_idents: std::sync::Weak<dyn swift::operation::Operation<#model, crate::#extras::#child_resource_type_tag_idents>>,)*
             _swift_internal_pls_no_touch_args: std::sync::Arc<#activity>,
             _swift_internal_pls_no_touch_history: std::sync::Arc<<#model as swift::Model>::History>,
             _swift_internal_pls_no_touch_result: Option<(u64, #output)>
@@ -285,7 +293,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
         impl #op {
             fn find_children(&mut self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {
-                #(self.#child_idents = timelines.#read_idents.last_before(time).1.get_op();)*
+                #(self.#child_idents = timelines.#read_idents.last_before(time).1.get_op_weak();)*
             }
         }
 
