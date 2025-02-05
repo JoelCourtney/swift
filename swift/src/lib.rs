@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::operation::GroundedOperationBundle;
 
+pub mod alloc;
 pub mod duration;
 pub mod history;
 pub mod macros;

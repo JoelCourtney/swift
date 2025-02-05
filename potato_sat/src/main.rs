@@ -2,6 +2,7 @@ mod activities;
 
 use crate::activities::recharge_potato::RechargePotato;
 use serde::{Deserialize, Serialize};
+use swift::alloc::SendBump;
 use swift::duration::Duration;
 use swift::reexports::tokio;
 use swift::{model, Resource, Session};
@@ -31,13 +32,23 @@ async fn main() {
     let mut session = Session::<PotatoSat>::default();
     session.add(Duration(1), RechargePotato { amount: 5 }).await;
 
-    let battery = &*session.op_timelines.battery.last().run().await.to_string();
+    let b = SendBump::new();
+
+    let battery = &*session
+        .op_timelines
+        .battery
+        .last()
+        .run(&b)
+        .await
+        .to_string();
+
+    let b = SendBump::new();
 
     let temperature = &*session
         .op_timelines
         .temperature
         .last()
-        .run()
+        .run(&b)
         .await
         .to_string();
 

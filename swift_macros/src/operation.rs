@@ -238,7 +238,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         #(let #read_write_child_idents = op_internal.#read_write_child_idents.upgrade().unwrap();)*
 
         #(let (#read_only_resource_hashes, #read_only_resource_idents) = #read_only_child_idents
-                .run(children_should_spawn)
+                .run(children_should_spawn, b)
                 .await;
         )*
         #(let mut #write_only_resource_idents = <crate::#extras::#write_only_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType::default();)*
@@ -246,7 +246,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         #(
             let (#read_write_resource_hashes, mut #read_write_resource_idents) = {
                 let (hash, #read_write_child_idents) = #read_write_child_idents
-                    .run(children_should_spawn)
+                    .run(children_should_spawn, b)
                     .await;
                 (hash, #read_write_child_idents.clone())
             };
@@ -298,41 +298,46 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         }
 
         #(
-            #[swift::reexports::async_trait::async_trait]
             impl swift::operation::Operation<#model, crate::#extras::#all_write_resource_type_tag_idents> for swift::reexports::tokio::sync::RwLock<#op> {
-                async fn run(&self, should_spawn: swift::operation::ShouldSpawn) -> (u64, swift::reexports::tokio::sync::RwLockReadGuard<<crate::#extras::#all_write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType>) {
-                    use swift::history::AsyncMap;
-                    // If you (the thread) can get the write lock on the node, then you are responsible
-                    // for calculating the hash and value if they aren't present.
-                    // Otherwise, wait for a read lock and return the cached results.
-                    let read = if let Ok(mut write) = self.try_write() {
-                        if write._swift_internal_pls_no_touch_result.is_none() {
-                            let result = if should_spawn == swift::operation::ShouldSpawn::Yes {
-                                let op_internal = write.clone();
-                                swift::reexports::tokio::task::spawn(async move {
+                fn run<'a>(&'a self, should_spawn: swift::operation::ShouldSpawn, b: &'a swift::alloc::SendBump) -> swift::alloc::BumpedFuture<'a, (u64, swift::reexports::tokio::sync::RwLockReadGuard<<crate::#extras::#all_write_resource_type_tag_idents as swift::resource::ResourceTypeTag>::ResourceType>)> {
+                    unsafe { std::pin::Pin::new_unchecked(b.alloc(async move {
+                        use swift::history::AsyncMap;
+                        // If you (the thread) can get the write lock on the node, then you are responsible
+                        // for calculating the hash and value if they aren't present.
+                        // Otherwise, wait for a read lock and return the cached results.
+                        let read = if let Ok(mut write) = self.try_write() {
+                            if write._swift_internal_pls_no_touch_result.is_none() {
+                                let result = if should_spawn == swift::operation::ShouldSpawn::Yes {
+                                    let op_internal = write.clone();
+                                    swift::reexports::tokio::task::spawn(async move {
+                                        let new_bump = swift::alloc::SendBump::new();
+                                        let b = &new_bump;
+                                        #run_internal
+                                    }).await.unwrap()
+                                } else {
+                                    let op_internal = &write;
                                     #run_internal
-                                }).await.unwrap()
+                                };
+                                write._swift_internal_pls_no_touch_result = result;
+                                write.downgrade()
                             } else {
-                                let op_internal = &write;
-                                #run_internal
-                            };
-                            write._swift_internal_pls_no_touch_result = result;
-                            write.downgrade()
+                                write.downgrade()
+                            }
                         } else {
-                            write.downgrade()
-                        }
-                    } else {
-                        self.read().await
-                    };
+                            self.read().await
+                        };
 
-                    (
-                        read._swift_internal_pls_no_touch_result.as_ref().unwrap().0,
-                        swift::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o._swift_internal_pls_no_touch_result.as_ref().unwrap().1.#write_idents)
-                    )
+                        (
+                            read._swift_internal_pls_no_touch_result.as_ref().unwrap().0,
+                            swift::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o._swift_internal_pls_no_touch_result.as_ref().unwrap().1.#write_idents)
+                        )
+                    }))}
                 }
 
-                async fn find_children(&self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {
-                    self.write().await.find_children(time, timelines);
+                fn find_children<'a>(&'a self, time: swift::duration::Duration, timelines: &'a <#model as swift::Model>::OperationTimelines, b: &'a swift::alloc::SendBump) -> swift::alloc::BumpedFuture<'a, ()> {
+                    unsafe { std::pin::Pin::new_unchecked(b.alloc(async move {
+                        self.write().await.find_children(time, timelines);
+                    }))}
                 }
             }
         )*

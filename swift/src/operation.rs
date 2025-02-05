@@ -2,22 +2,31 @@
 
 use std::collections::BTreeMap;
 use std::hash::BuildHasher;
+use std::pin::Pin;
 use std::sync::{Arc, Weak};
 
-use async_trait::async_trait;
-use tokio::sync::{RwLock, RwLockReadGuard};
-
+use crate::alloc::{BumpedFuture, SendBump};
 use crate::duration::Duration;
 use crate::history::SwiftDefaultHashBuilder;
 use crate::operation::ShouldSpawn::{No, Yes};
 use crate::resource::ResourceTypeTag;
 use crate::Model;
+use async_trait::async_trait;
+use tokio::sync::{RwLock, RwLockReadGuard};
 
-#[async_trait]
 pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
-    async fn run(&self, should_spawn: ShouldSpawn) -> (u64, RwLockReadGuard<TAG::ResourceType>);
+    fn run<'a>(
+        &'a self,
+        should_spawn: ShouldSpawn,
+        b: &'a SendBump,
+    ) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, TAG::ResourceType>)>;
 
-    async fn find_children(&self, time: Duration, timelines: &M::OperationTimelines);
+    fn find_children<'a>(
+        &'a self,
+        time: Duration,
+        timelines: &'a M::OperationTimelines,
+        b: &'a SendBump,
+    ) -> BumpedFuture<'a, ()>;
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialOrd, PartialEq)]
@@ -69,8 +78,8 @@ impl<M: Model, TAG: ResourceTypeTag> OperationNode<M, TAG> {
         }
     }
 
-    pub async fn run(&self) -> RwLockReadGuard<TAG::ResourceType> {
-        self.op.run(No(0)).await.1
+    pub async fn run<'a>(&'a self, b: &'a SendBump) -> RwLockReadGuard<'a, TAG::ResourceType> {
+        self.op.run(No(0), b).await.1
     }
 
     pub fn get_op(&self) -> Arc<dyn Operation<M, TAG>> {
@@ -82,22 +91,36 @@ impl<M: Model, TAG: ResourceTypeTag> OperationNode<M, TAG> {
     }
 }
 
-#[async_trait]
 impl<M: Model, TAG: ResourceTypeTag> Operation<M, TAG> for RwLock<TAG::ResourceType> {
-    async fn run(&self, _should_spawn: ShouldSpawn) -> (u64, RwLockReadGuard<TAG::ResourceType>) {
-        (
-            SwiftDefaultHashBuilder::default().hash_one(
-                bincode::serde::encode_to_vec(
-                    &*(self.try_read().unwrap()),
-                    bincode::config::standard(),
+    fn run<'a>(
+        &'a self,
+        _should_spawn: ShouldSpawn,
+        b: &'a SendBump,
+    ) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, TAG::ResourceType>)> {
+        unsafe {
+            Pin::new_unchecked(b.alloc(async move {
+                (
+                    SwiftDefaultHashBuilder::default().hash_one(
+                        bincode::serde::encode_to_vec(
+                            &*(self.try_read().unwrap()),
+                            bincode::config::standard(),
+                        )
+                        .unwrap(),
+                    ),
+                    self.read().await,
                 )
-                .unwrap(),
-            ),
-            self.read().await,
-        )
+            }))
+        }
     }
 
-    async fn find_children(&self, _time: Duration, _timelines: &M::OperationTimelines) {}
+    fn find_children<'a>(
+        &'a self,
+        _time: Duration,
+        _timelines: &'a M::OperationTimelines,
+        b: &'a SendBump,
+    ) -> BumpedFuture<'a, ()> {
+        unsafe { Pin::new_unchecked(b.alloc(async move {})) }
+    }
 }
 
 pub struct OperationTimeline<M: Model, TAG: ResourceTypeTag>(

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use swift::alloc::SendBump;
 use swift::reexports::tokio;
 use swift::{impl_activity, model, Duration, Durative, Session};
 
@@ -54,9 +55,11 @@ async fn main() {
 
     println!("built");
 
-    let a = &*session.op_timelines.a.last().run().await.to_string();
+    let b = SendBump::new();
 
-    let b = &*session.op_timelines.b.last().run().await.to_string();
+    let a = &*session.op_timelines.a.last().run(&b).await.to_string();
+
+    let b = &*session.op_timelines.b.last().run(&b).await.to_string();
 
     dbg!(a, b);
 
