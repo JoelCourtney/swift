@@ -14,11 +14,11 @@ pub trait AsyncMap<R: Resource> {
 
 impl<R: Resource> AsyncMap<R> for History<R> {
     fn insert_async(&self, hash: u64, value: R) -> Option<R> {
-        tokio::task::block_in_place(|| self.insert(hash, value))
+        self.insert(hash, value)
     }
 
     fn get_async(&self, hash: u64) -> Option<R> {
-        tokio::task::block_in_place(|| self.get(&hash)).map(|r| r.value().clone())
+        self.get(&hash).map(|r| r.value().clone())
     }
 }
 

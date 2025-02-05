@@ -117,7 +117,7 @@ impl<M: Model, TAG: ResourceTypeTag> OperationTimeline<M, TAG> {
     }
 
     pub fn last_before(&self, time: Duration) -> (&Duration, &OperationNode<M, TAG>) {
-        self.0.range(..time).last().unwrap()
+        self.0.range(..time).next_back().unwrap()
     }
 
     pub fn first_after(&self, time: Duration) -> Option<(&Duration, &OperationNode<M, TAG>)> {
