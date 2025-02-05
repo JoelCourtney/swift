@@ -2,9 +2,10 @@
 
 use crate::duration::Duration;
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 pub trait Resource:
-    'static + Default + Send + Sync + Serialize + for<'a> Deserialize<'a> + Clone
+    'static + Default + Send + Sync + Serialize + for<'a> Deserialize<'a> + Clone + Debug
 {
     const PIECEWISE_CONSTANT: bool;
 }

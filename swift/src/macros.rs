@@ -71,7 +71,7 @@ macro_rules! model {
                     type State = State;
                 }
 
-                #[derive(Default)]
+                #[derive(Default, Debug, Serialize, Deserialize)]
                 pub struct History {
                     $(
                         pub(crate) $res: $crate::history::History<$ty>,

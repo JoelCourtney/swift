@@ -15,7 +15,7 @@ model! {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
 pub enum OperatingMode {
     #[default]
     Nominal,
