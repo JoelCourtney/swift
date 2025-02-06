@@ -3,31 +3,13 @@
 use std::collections::BTreeMap;
 use std::hash::BuildHasher;
 use std::pin::Pin;
-use std::sync::{Arc, Weak};
 
 use crate::alloc::{BumpedFuture, SendBump};
-use crate::duration::Duration;
 use crate::history::SwiftDefaultHashBuilder;
 use crate::operation::ShouldSpawn::{No, Yes};
-use crate::resource::ResourceTypeTag;
-use crate::Model;
+use crate::{HasResource, History, Operation, Resource, Time, Writer};
 use async_trait::async_trait;
 use tokio::sync::{RwLock, RwLockReadGuard};
-
-pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
-    fn run<'a>(
-        &'a self,
-        should_spawn: ShouldSpawn,
-        b: &'a SendBump,
-    ) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, TAG::ResourceType>)>;
-
-    fn find_children<'a>(
-        &'a self,
-        time: Duration,
-        timelines: &'a M::OperationTimelines,
-        b: &'a SendBump,
-    ) -> BumpedFuture<'a, ()>;
-}
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialOrd, PartialEq)]
 pub enum ShouldSpawn {
@@ -49,105 +31,64 @@ impl ShouldSpawn {
     }
 }
 
+pub struct InitialConditionOp<R: Resource> {
+    lock: RwLock<R::Read>,
+}
+
 #[async_trait]
-pub trait OperationBundle<M: Model> {
-    async fn unpack(
-        &self,
-        time: Duration,
-        timelines: &mut M::OperationTimelines,
-        history: Arc<M::History>,
-    );
-}
+impl<R: Resource, T: HasResource<R>> Operation<T> for InitialConditionOp<R> {
+    async fn find_children(&self, _time: Time, _timelines: &T) {}
 
-pub type GroundedOperationBundle<M> = (Duration, Box<dyn OperationBundle<M>>);
-
-pub struct OperationNode<M: Model, TAG: ResourceTypeTag> {
-    op: Arc<dyn Operation<M, TAG>>,
-
-    _parent_notifiers: Vec<Box<dyn FnOnce() + Send + Sync>>,
-}
-
-impl<M: Model, TAG: ResourceTypeTag> OperationNode<M, TAG> {
-    pub fn new(
-        op: Arc<dyn Operation<M, TAG>>,
-        parent_notifiers: Vec<Box<dyn FnOnce() + Send + Sync>>,
-    ) -> OperationNode<M, TAG> {
-        OperationNode {
-            op,
-            _parent_notifiers: parent_notifiers,
-        }
-    }
-
-    pub async fn run<'a>(&'a self, b: &'a SendBump) -> RwLockReadGuard<'a, TAG::ResourceType> {
-        self.op.run(No(0), b).await.1
-    }
-
-    pub fn get_op(&self) -> Arc<dyn Operation<M, TAG>> {
-        self.op.clone()
-    }
-
-    pub fn get_op_weak(&self) -> Weak<dyn Operation<M, TAG>> {
-        Arc::downgrade(&self.op)
+    async fn add_parent(&self, _parent: &dyn Operation<T>) {
+        todo!()
     }
 }
 
-impl<M: Model, TAG: ResourceTypeTag> Operation<M, TAG> for RwLock<TAG::ResourceType> {
-    fn run<'a>(
-        &'a self,
-        _should_spawn: ShouldSpawn,
-        b: &'a SendBump,
-    ) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, TAG::ResourceType>)> {
+impl<R: Resource, T: HasResource<R>> Writer<R, T> for InitialConditionOp<R> {
+    fn read<'a>(&'a self, _history: &dyn History<R>, _should_spawn: ShouldSpawn, b: &'a SendBump) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, R::Read>)> {
         unsafe {
             Pin::new_unchecked(b.alloc(async move {
                 (
                     SwiftDefaultHashBuilder::default().hash_one(
                         bincode::serde::encode_to_vec(
-                            &*(self.try_read().unwrap()),
+                            &*(self.lock.try_read().unwrap()),
                             bincode::config::standard(),
                         )
                         .unwrap(),
                     ),
-                    self.read().await,
+                    self.lock.read().await
                 )
             }))
         }
     }
-
-    fn find_children<'a>(
-        &'a self,
-        _time: Duration,
-        _timelines: &'a M::OperationTimelines,
-        b: &'a SendBump,
-    ) -> BumpedFuture<'a, ()> {
-        unsafe { Pin::new_unchecked(b.alloc(async move {})) }
-    }
 }
 
-pub struct OperationTimeline<M: Model, TAG: ResourceTypeTag>(
-    BTreeMap<Duration, OperationNode<M, TAG>>,
+pub struct OperationTimeline<'a, R: Resource, T: HasResource<R>>(
+    BTreeMap<Time, &'a dyn Writer<R, T>>
 );
 
-impl<M: Model, TAG: ResourceTypeTag> OperationTimeline<M, TAG> {
-    pub fn init(value: TAG::ResourceType) -> OperationTimeline<M, TAG> {
+impl<'a, R: Resource, T: HasResource<R>> OperationTimeline<'a, R, T> {
+    pub fn init(time: Time, initial_condition: &dyn Writer<R, T>) -> OperationTimeline<R, T> {
         OperationTimeline(BTreeMap::from([(
-            Duration::zero(),
-            OperationNode::new(Arc::new(RwLock::new(value)), vec![]),
+            time,
+            initial_condition
         )]))
     }
 
-    pub fn last(&self) -> &OperationNode<M, TAG> {
-        self.0.last_key_value().unwrap().1
+    pub fn last(&self) -> &dyn Writer<R, T> {
+        *self.0.last_key_value().unwrap().1
     }
 
-    pub fn last_before(&self, time: Duration) -> (&Duration, &OperationNode<M, TAG>) {
-        self.0.range(..time).next_back().unwrap()
+    pub fn last_before(&self, time: Time) -> (Time, &dyn Writer<R, T>) {
+        let t = self.0.range(..time).next_back().unwrap();
+        (*t.0, *t.1)
     }
 
-    pub fn first_after(&self, time: Duration) -> Option<(&Duration, &OperationNode<M, TAG>)> {
-        self.0.range(time..).next()
+    pub fn first_after(&self, time: Time) -> Option<(Time, &dyn Writer<R, T>)> {
+        self.0.range(time..).next().map(|t| (*t.0, *t.1))
     }
 
-    pub fn insert(&mut self, time: Duration, value: OperationNode<M, TAG>) {
+    pub fn insert(&'a mut self, time: Time, value: &'a dyn Writer<R, T>) {
         self.0.insert(time, value);
     }
 }

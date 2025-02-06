@@ -223,3 +223,14 @@ macro_rules! impl_activity {
         }
     };
 }
+
+#[macro_export]
+macro_rules! op {
+    ($($read:tt),* -> $($write:ident),* {
+        $body:tt
+    }) => {
+        {
+
+        }
+    };
+}

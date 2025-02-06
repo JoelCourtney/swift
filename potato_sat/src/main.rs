@@ -3,9 +3,10 @@ mod activities;
 use crate::activities::recharge_potato::RechargePotato;
 use serde::{Deserialize, Serialize};
 use swift::alloc::SendBump;
-use swift::duration::Duration;
+use swift::time::Duration;
 use swift::reexports::tokio;
-use swift::{model, Resource, Session};
+use swift::{model, ResourceType, Session};
+use swift::history::CopyHistory;
 
 model! {
     pub struct PotatoSat {
@@ -23,8 +24,9 @@ pub enum OperatingMode {
     Safe(String),
 }
 
-impl Resource for OperatingMode {
+impl ResourceType for OperatingMode {
     const PIECEWISE_CONSTANT: bool = true;
+    type History = CopyHistory<OperatingMode>;
 }
 
 #[tokio::main]

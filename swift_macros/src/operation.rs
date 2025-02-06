@@ -123,14 +123,14 @@ fn generate_bundle(idents: &Idents) -> TokenStream {
 
         #[swift::reexports::async_trait::async_trait]
         impl swift::operation::OperationBundle<#model> for #bundle {
-            async fn unpack(&self, time: swift::duration::Duration, timelines: &mut <#model as swift::Model>::OperationTimelines, history: std::sync::Arc<<#model as swift::Model>::History>) {
+            async fn unpack(&self, time: swift::duration::Duration, timelines: &mut <#model as swift::Model>::OperationTimelines, history: &<#model as swift::Model>::History) {
                 #(let #child_idents = timelines.#read_idents.last_before(time);)*
 
                 let op = std::sync::Arc::new(swift::reexports::tokio::sync::RwLock::new(#op {
                     #(#child_idents: #child_idents.1.get_op_weak(),)*
                     _swift_internal_pls_no_touch_args: self.0.clone(),
                     _swift_internal_pls_no_touch_result: None,
-                    _swift_internal_pls_no_touch_history: history.clone()
+                    _swift_internal_pls_no_touch_history: history
                 }));
 
                 #(let #write_node_idents = swift::operation::OperationNode::new(op.clone(), vec![]);)*
@@ -284,14 +284,14 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
     quote! {
         #[derive(Clone)]
-        struct #op {
+        struct #op<'a> {
             #(#child_idents: std::sync::Weak<dyn swift::operation::Operation<#model, crate::#extras::#child_resource_type_tag_idents>>,)*
             _swift_internal_pls_no_touch_args: std::sync::Arc<#activity>,
-            _swift_internal_pls_no_touch_history: std::sync::Arc<<#model as swift::Model>::History>,
+            _swift_internal_pls_no_touch_history: &'a <#model as swift::Model>::History,
             _swift_internal_pls_no_touch_result: Option<(u64, #output)>
         }
 
-        impl #op {
+        impl #op<'a> {
             fn find_children(&mut self, time: swift::duration::Duration, timelines: &<#model as swift::Model>::OperationTimelines) {
                 #(self.#child_idents = timelines.#read_idents.last_before(time).1.get_op_weak();)*
             }

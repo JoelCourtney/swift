@@ -2,66 +2,64 @@
 //!
 //! A discrete event simulation engine with optimal incremental simulation
 //! and parallelism.
-//!
-//! (WIP) See [Session], [model] and [impl_activity] for details.
 
+use crate::alloc::{BumpedFuture, SendBump};
+use crate::operation::ShouldSpawn;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-
-use crate::operation::GroundedOperationBundle;
+use std::fmt::Debug;
+pub use swift_macros::Durative;
+use tokio::sync::RwLockReadGuard;
 
 pub mod alloc;
-pub mod duration;
 pub mod history;
 pub mod macros;
 pub mod operation;
 pub mod reexports;
-pub mod resource;
 
-pub use duration::{Duration, Durative};
-pub use resource::Resource;
-pub use swift_macros::Durative;
+pub type Duration = time::Duration;
+pub type Time = time::PrimitiveDateTime;
 
-/// An interactive session with cached simulation history and lazy evaluation.
-pub struct Session<M: Model> {
-    pub history: Arc<M::History>,
-    pub op_timelines: M::OperationTimelines,
+pub trait Resource: Sized {
+    const PIECEWISE_CONSTANT: bool;
+
+    type Read: From<Self::Write> + Copy + Send + Sync + Serialize;
+    type Write: From<Self::Read> + Clone + Default + Debug + Serialize + for<'a> Deserialize<'a> + Send;
+
+    type History: for<'a> History<'a, Self>;
 }
 
-impl<M: Model> Default for Session<M> {
-    fn default() -> Self {
-        Session {
-            history: Arc::new(M::History::default()),
-            op_timelines: M::OperationTimelines::default(),
-        }
-    }
+pub struct Plan<M: Model> {
+    _activities: Vec<(Time, Box<dyn Activity<M>>)>,
+    _operations: M::Timelines
 }
 
-impl<M: Model> Session<M> {
-    pub async fn add(&mut self, start: Duration, activity: impl Activity<Model = M>) {
-        for trigger in activity.decompose(start) {
-            trigger
-                .1
-                .unpack(trigger.0, &mut self.op_timelines, self.history.clone())
-                .await
-        }
-    }
+pub trait Model {
+    type Timelines: Timelines;
 }
 
-/// The trait that all models implement.
-///
-/// Do not implement manually. Use the [model] macro.
-pub trait Model: Sized {
-    type History: Default;
-    type OperationTimelines: Default;
-    type State: Default;
+pub trait Timelines {}
+
+pub trait HasResource<R: Resource>: Timelines {
+    fn find_child(&self, time: Time) -> &dyn Writer<R, Self>;
 }
 
-/// The trait that all activities implement.
-///
-/// Do not implement manually. Use the [impl_activity] macro.
-pub trait Activity: Durative + Clone + Serialize + for<'a> Deserialize<'a> {
-    type Model: Model;
+// Auto implemented for models that contain all the resources the activity touches
+pub trait Activity<M: Model> {
+    fn run(&self, start: Time) -> Vec<(Time, Box<dyn Operation<M::Timelines>>)>;
+}
 
-    fn decompose(self, start: Duration) -> Vec<GroundedOperationBundle<Self::Model>>;
+#[async_trait]
+pub trait Operation<T: Timelines>: Sync {
+    async fn find_children(&self, time: Time, timelines: &T);
+    async fn add_parent(&self, parent: &dyn Operation<T>);
+}
+
+pub trait Writer<R: Resource, T: HasResource<R>>: Operation<T> {
+    fn read<'a>(&'a self, history: &dyn History<R>, should_spawn: ShouldSpawn, b: &'a SendBump) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, R::Read>)>;
+}
+
+pub trait History<'a, R: Resource> where Self: 'a {
+    fn insert(&'a self, hash: u64, value: R::Write) -> R::Read;
+    fn get(&'a self, hash: u64) -> Option<R::Read>;
 }

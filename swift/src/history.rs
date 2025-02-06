@@ -1,24 +1,44 @@
-use dashmap::DashMap;
 use std::hash::{BuildHasher, Hasher};
+use std::ops::Deref;
 
-use crate::resource::Resource;
+use dashmap::DashMap;
+use elsa::sync::FrozenMap;
+use stable_deref_trait::StableDeref;
 
 pub type SwiftDefaultHashBuilder = foldhash::fast::FixedState;
 
-pub type History<R> = DashMap<u64, R, PassThroughHashBuilder>;
+pub trait History<'a, R> where Self: 'a {
+    type HistoryEntry: Copy + 'a;
 
-pub trait AsyncMap<R: Resource> {
-    fn insert_async(&self, hash: u64, value: R) -> Option<R>;
-    fn get_async(&self, hash: u64) -> Option<R>;
+    fn insert(&'a self, hash: u64, value: R) -> Self::HistoryEntry;
+    fn get(&'a self, hash: u64) -> Option<Self::HistoryEntry>;
 }
 
-impl<R: Resource> AsyncMap<R> for History<R> {
-    fn insert_async(&self, hash: u64, value: R) -> Option<R> {
-        self.insert(hash, value)
+pub struct CopyHistory<R: Copy>(DashMap<u64, R, PassThroughHashBuilder>);
+
+impl<'a, R: Copy + 'a> History<'a, R> for CopyHistory<R> {
+    type HistoryEntry = R;
+
+    fn insert(&'a self, hash: u64, value: R) -> R {
+        self.0.insert(hash, value).unwrap()
     }
 
-    fn get_async(&self, hash: u64) -> Option<R> {
-        self.get(&hash).map(|r| r.value().clone())
+    fn get(&'a self, hash: u64) -> Option<R> {
+        self.0.get(&hash).map(|r| *r)
+    }
+}
+
+pub struct IndirectHistory<R: StableDeref>(FrozenMap<u64, R>);
+
+impl<'a, R: StableDeref + 'a> History<'a, R> for IndirectHistory<R> where Self: 'a {
+    type HistoryEntry = &'a <R as Deref>::Target;
+
+    fn insert(&'a self, hash: u64, value: R) -> Self::HistoryEntry {
+        self.0.insert(hash, value)
+    }
+
+    fn get(&'a self, hash: u64) -> Option<Self::HistoryEntry> {
+        self.0.get(&hash)
     }
 }
 
