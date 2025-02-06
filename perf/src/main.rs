@@ -1,69 +1,83 @@
-use serde::{Deserialize, Serialize};
-use swift::alloc::SendBump;
-use swift::reexports::tokio;
-use swift::{impl_activity, model, Duration, Durative, Session};
+use swift::history::{CopyHistory, DerefHistory};
+use swift::{activity, model, Duration, Epoch, Model, Plan, Resource};
 
 model! {
-    pub struct Perf {
-        a: u32,
-        b: String
+    pub Perf {
+        a: A,
+        b: B
     }
 }
 
-#[derive(Serialize, Deserialize, Durative, Clone)]
-pub struct ConvertAToB;
+pub enum A {}
+impl<'h> Resource<'h> for A {
+    const PIECEWISE_CONSTANT: bool = true;
+    type Read = u32;
+    type Write = u32;
+    type History = CopyHistory<'h, A>;
+}
 
-impl_activity! {
-    for ConvertAToB in Perf {
-        start => {
-            :b = ?a.to_string();
+pub enum B {}
+impl<'h> Resource<'h> for B {
+    const PIECEWISE_CONSTANT: bool = true;
+    type Read = &'h str;
+    type Write = String;
+    type History = DerefHistory<'h, B>;
+}
+
+struct IncrementA;
+activity! {
+    for IncrementA {
+        @(start) a: A -> a {
+            a += 1;
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Durative, Clone)]
-pub struct ConvertBToA;
-
-impl_activity! {
-    for ConvertBToA in Perf {
-        start => {
-            :a = ?b.parse().unwrap();
+struct ConvertAToB;
+activity! {
+    for ConvertAToB {
+        @(start) a: A -> b: B {
+            b = a.to_string()
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Durative, Clone)]
-pub struct IncrementA;
-
-impl_activity! {
-    for IncrementA in Perf {
-        start => {
-            ?:a += 1;
+struct ConvertBToA;
+activity! {
+    for ConvertBToA {
+        @(start) b: B -> a: A {
+            a = b.parse().unwrap();
         }
     }
 }
 
-#[tokio::main]
-async fn main() {
-    let mut session = Session::<Perf>::default();
+fn main() {
+    let bump = swift::exec::SendBump::new();
+    let _histories = PerfHistories::default();
+    let plan_start = Epoch::now().unwrap();
+    let mut plan = Perf::new_plan(
+        plan_start,
+        PerfInitialConditions {
+            a: 0,
+            b: "".to_string(),
+        },
+        &bump,
+    );
 
-    for i in 1..10000000 {
-        session.add(Duration(3 * i), IncrementA).await;
-        session.add(Duration(3 * i + 1), ConvertAToB).await;
-        session.add(Duration(3 * i + 2), ConvertBToA).await;
+    let offset = Duration::from_microseconds(1.0);
+
+    for i in 0..1000 {
+        plan.insert(
+            plan_start + offset + 3 * i * Duration::from_seconds(1.0),
+            IncrementA,
+        );
+        plan.insert(
+            plan_start + offset + 3 * i * Duration::from_seconds(1.0) + Duration::from_seconds(1.0),
+            ConvertAToB,
+        );
+        plan.insert(
+            plan_start + offset + 3 * i * Duration::from_seconds(1.0) + Duration::from_seconds(2.0),
+            ConvertBToA,
+        );
     }
-
-    println!("built");
-
-    let b = SendBump::new();
-
-    let a = &*session.op_timelines.a.last().run(&b).await.to_string();
-
-    let b = &*session.op_timelines.b.last().run(&b).await.to_string();
-
-    dbg!(a, b);
-
-    drop(session);
-
-    println!("hi");
 }

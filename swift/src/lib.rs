@@ -2,66 +2,121 @@
 //!
 //! A discrete event simulation engine with optimal incremental simulation
 //! and parallelism.
-//!
-//! (WIP) See [Session], [model] and [impl_activity] for details.
 
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use crate::exec::{BumpedFuture, ExecEnvironment, SendBump};
+use async_trait::async_trait;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::collections::BTreeMap;
+use std::fmt::Debug;
+pub use swift_macros::{activity, model};
+use tokio::sync::RwLockReadGuard;
+use uuid::Uuid;
 
-use crate::operation::GroundedOperationBundle;
-
-pub mod alloc;
-pub mod duration;
+pub mod exec;
 pub mod history;
-pub mod macros;
 pub mod operation;
 pub mod reexports;
-pub mod resource;
 
-pub use duration::{Duration, Durative};
-pub use resource::Resource;
-pub use swift_macros::Durative;
+pub use hifitime::Duration;
+pub use hifitime::Epoch;
 
-/// An interactive session with cached simulation history and lazy evaluation.
-pub struct Session<M: Model> {
-    pub history: Arc<M::History>,
-    pub op_timelines: M::OperationTimelines,
+pub trait Resource<'h>: Sized {
+    const PIECEWISE_CONSTANT: bool;
+
+    type Read: 'h + Copy + Send + Sync + Serialize;
+    type Write: 'static
+        + From<Self::Read>
+        + Clone
+        + Default
+        + Debug
+        + Serialize
+        + DeserializeOwned
+        + Send
+        + Sync;
+
+    type History: HasHistory<'h, Self> + Default;
 }
 
-impl<M: Model> Default for Session<M> {
-    fn default() -> Self {
-        Session {
-            history: Arc::new(M::History::default()),
-            op_timelines: M::OperationTimelines::default(),
-        }
+pub trait Plan<'o>: Sync {
+    type Model: Model<'o>;
+
+    fn insert(&mut self, time: Epoch, activity: impl Activity<'o, Self::Model> + 'o) -> Uuid;
+    fn remove(&self, uuid: Uuid);
+}
+
+pub trait HasResource<'o, R: Resource<'o>>: Plan<'o> {
+    fn find_child(&self, time: Epoch) -> &'o dyn Writer<'o, R, Self::Model>;
+    fn insert_operation(&mut self, time: Epoch, op: &'o dyn Writer<'o, R, Self::Model>);
+}
+
+pub trait Model<'o>: Sync {
+    type Plan: Plan<'o, Model = Self>;
+    type InitialConditions;
+    type Histories: 'o + Sync + Default;
+
+    fn new_plan(
+        time: Epoch,
+        initial_conditions: Self::InitialConditions,
+        bump: &'o SendBump,
+    ) -> Self::Plan;
+}
+
+pub struct Timeline<'o, R: Resource<'o>, M: Model<'o>>(BTreeMap<Epoch, &'o (dyn Writer<'o, R, M>)>)
+where
+    M::Plan: HasResource<'o, R>;
+
+impl<'o, R: Resource<'o>, M: Model<'o>> Timeline<'o, R, M>
+where
+    M::Plan: HasResource<'o, R>,
+{
+    pub fn init(time: Epoch, initial_condition: &'o (dyn Writer<'o, R, M>)) -> Timeline<'o, R, M> {
+        Timeline(BTreeMap::from([(time, initial_condition)]))
+    }
+
+    pub fn last(&self) -> &'o (dyn Writer<'o, R, M>) {
+        *self.0.last_key_value().unwrap().1
+    }
+
+    pub fn last_before(&self, time: Epoch) -> (Epoch, &'o (dyn Writer<'o, R, M>)) {
+        let t = self.0.range(..time).next_back().unwrap_or_else(|| {
+            panic!("No writers found before {time}. Did you insert before the initial conditions?")
+        });
+        (*t.0, *t.1)
+    }
+
+    pub fn first_after(&self, time: Epoch) -> Option<(Epoch, &'o (dyn Writer<'o, R, M>))> {
+        self.0.range(time..).next().map(move |t| (*t.0, *t.1))
+    }
+
+    pub fn insert(&mut self, time: Epoch, value: &'o (dyn Writer<'o, R, M>)) {
+        self.0.insert(time, value);
     }
 }
 
-impl<M: Model> Session<M> {
-    pub async fn add(&mut self, start: Duration, activity: impl Activity<Model = M>) {
-        for trigger in activity.decompose(start) {
-            trigger
-                .1
-                .unpack(trigger.0, &mut self.op_timelines, self.history.clone())
-                .await
-        }
-    }
+// Auto implemented for models that contain all the resources the activity touches
+pub trait Activity<'o, M: Model<'o>>: Send + Sync {
+    fn decompose(&'o self, start: Epoch, plan: &mut M::Plan, bump: &'o SendBump);
 }
 
-/// The trait that all models implement.
-///
-/// Do not implement manually. Use the [model] macro.
-pub trait Model: Sized {
-    type History: Default;
-    type OperationTimelines: Default;
-    type State: Default;
+#[async_trait]
+pub trait Operation<'o, M: Model<'o>>: Sync {
+    async fn find_children(&self, time: Epoch, plan: &M::Plan);
+    async fn add_parent(&self, parent: &'o dyn Operation<'o, M>);
+    async fn remove_parent(&self, parent: &dyn Operation<'o, M>);
 }
 
-/// The trait that all activities implement.
-///
-/// Do not implement manually. Use the [impl_activity] macro.
-pub trait Activity: Durative + Clone + Serialize + for<'a> Deserialize<'a> {
-    type Model: Model;
+pub trait Writer<'o, R: Resource<'o>, M: Model<'o>>: Operation<'o, M> {
+    fn read<'b>(
+        &'o self,
+        histories: &'o M::Histories,
+        env: ExecEnvironment<'b>,
+    ) -> BumpedFuture<'b, (u64, RwLockReadGuard<'o, <R as Resource<'o>>::Read>)>
+    where
+        'o: 'b;
+}
 
-    fn decompose(self, start: Duration) -> Vec<GroundedOperationBundle<Self::Model>>;
+pub trait HasHistory<'h, R: Resource<'h>> {
+    fn insert(&'h self, hash: u64, value: R::Write) -> R::Read;
+    fn get(&'h self, hash: u64) -> Option<R::Read>;
 }

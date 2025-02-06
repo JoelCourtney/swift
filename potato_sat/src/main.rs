@@ -1,56 +1,33 @@
+use swift::history::{CopyHistory, DerefHistory};
+use swift::{model, Resource};
+
 mod activities;
 
-use crate::activities::recharge_potato::RechargePotato;
-use serde::{Deserialize, Serialize};
-use swift::alloc::SendBump;
-use swift::duration::Duration;
-use swift::reexports::tokio;
-use swift::{model, Resource, Session};
-
 model! {
-    pub struct PotatoSat {
-        battery: f32 = 2.0,
-        temperature: f32 = 5.0,
-
-        mode: OperatingMode = OperatingMode::Nominal
+    pub PotatoSat {
+        battery: Battery,
+        mode: Mode
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Default, Debug)]
-pub enum OperatingMode {
-    #[default]
-    Nominal,
-    Safe(String),
-}
+struct Battery;
 
-impl Resource for OperatingMode {
+impl<'h> Resource<'h> for Battery {
     const PIECEWISE_CONSTANT: bool = true;
+
+    type Read = f32;
+    type Write = f32;
+
+    type History = CopyHistory<'h, Self>;
 }
 
-#[tokio::main]
-async fn main() {
-    let mut session = Session::<PotatoSat>::default();
-    session.add(Duration(1), RechargePotato { amount: 5 }).await;
+struct Mode;
 
-    let b = SendBump::new();
-
-    let battery = &*session
-        .op_timelines
-        .battery
-        .last()
-        .run(&b)
-        .await
-        .to_string();
-
-    let b = SendBump::new();
-
-    let temperature = &*session
-        .op_timelines
-        .temperature
-        .last()
-        .run(&b)
-        .await
-        .to_string();
-
-    dbg!(battery, temperature);
+impl<'h> Resource<'h> for Mode {
+    const PIECEWISE_CONSTANT: bool = true;
+    type Read = &'h str;
+    type Write = String;
+    type History = DerefHistory<'h, Self>;
 }
+
+fn main() {}

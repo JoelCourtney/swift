@@ -1,24 +1,64 @@
-use dashmap::DashMap;
 use std::hash::{BuildHasher, Hasher};
+use std::ops::Deref;
 
-use crate::resource::Resource;
+use crate::{HasHistory, Resource};
+use dashmap::DashMap;
+use elsa::sync::FrozenMap;
+use stable_deref_trait::StableDeref;
 
 pub type SwiftDefaultHashBuilder = foldhash::fast::FixedState;
 
-pub type History<R> = DashMap<u64, R, PassThroughHashBuilder>;
+pub struct CopyHistory<'h, R: Resource<'h>>(
+    DashMap<u64, <R as Resource<'h>>::Write, PassThroughHashBuilder>,
+)
+where
+    <R as Resource<'h>>::Write: Copy;
 
-pub trait AsyncMap<R: Resource> {
-    fn insert_async(&self, hash: u64, value: R) -> Option<R>;
-    fn get_async(&self, hash: u64) -> Option<R>;
+impl<'h, R: Resource<'h>> Default for CopyHistory<'h, R>
+where
+    <R as Resource<'h>>::Write: Copy,
+{
+    fn default() -> Self {
+        CopyHistory(DashMap::default())
+    }
 }
 
-impl<R: Resource> AsyncMap<R> for History<R> {
-    fn insert_async(&self, hash: u64, value: R) -> Option<R> {
-        self.insert(hash, value)
+impl<'h, V: Copy + 'h, R: for<'b> Resource<'b, Read = V, Write = V> + 'h> HasHistory<'h, R>
+    for CopyHistory<'h, R>
+{
+    fn insert(&self, hash: u64, value: <R as Resource<'_>>::Write) -> <R as Resource<'_>>::Read {
+        self.0.insert(hash, value).unwrap()
     }
 
-    fn get_async(&self, hash: u64) -> Option<R> {
-        self.get(&hash).map(|r| r.value().clone())
+    fn get(&self, hash: u64) -> Option<<R as Resource<'_>>::Read> {
+        self.0.get(&hash).map(|r| *r)
+    }
+}
+
+pub struct DerefHistory<'h, R: Resource<'h>>(FrozenMap<u64, <R as Resource<'h>>::Write>)
+where
+    <R as Resource<'h>>::Write: StableDeref;
+
+impl<'h, R: Resource<'h>> Default for DerefHistory<'h, R>
+where
+    <R as Resource<'h>>::Write: StableDeref,
+{
+    fn default() -> Self {
+        DerefHistory(FrozenMap::default())
+    }
+}
+
+impl<'h, V: StableDeref + 'h, R: Resource<'h, Write = V, Read = &'h <V as Deref>::Target>>
+    HasHistory<'h, R> for DerefHistory<'h, R>
+where
+    Self: 'h,
+{
+    fn insert(&'h self, hash: u64, value: <R as Resource<'h>>::Write) -> <R as Resource<'h>>::Read {
+        self.0.insert(hash, value)
+    }
+
+    fn get(&'h self, hash: u64) -> Option<<R as Resource<'h>>::Read> {
+        self.0.get(&hash)
     }
 }
 

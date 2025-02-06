@@ -1,153 +1,149 @@
 #![doc(hidden)]
 
-use std::collections::BTreeMap;
 use std::hash::BuildHasher;
 use std::pin::Pin;
-use std::sync::{Arc, Weak};
 
-use crate::alloc::{BumpedFuture, SendBump};
-use crate::duration::Duration;
+use crate::exec::{BumpedFuture, ExecEnvironment, SendBump};
 use crate::history::SwiftDefaultHashBuilder;
-use crate::operation::ShouldSpawn::{No, Yes};
-use crate::resource::ResourceTypeTag;
-use crate::Model;
+use crate::{Activity, Epoch, HasHistory, HasResource, Model, Operation, Plan, Resource, Writer};
 use async_trait::async_trait;
 use tokio::sync::{RwLock, RwLockReadGuard};
+use uuid::Uuid;
 
-pub trait Operation<M: Model, TAG: ResourceTypeTag>: Send + Sync {
-    fn run<'a>(
-        &'a self,
-        should_spawn: ShouldSpawn,
-        b: &'a SendBump,
-    ) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, TAG::ResourceType>)>;
-
-    fn find_children<'a>(
-        &'a self,
-        time: Duration,
-        timelines: &'a M::OperationTimelines,
-        b: &'a SendBump,
-    ) -> BumpedFuture<'a, ()>;
+pub struct InitialConditionOpInner<'o, R: Resource<'o>, M: Model<'o>>
+where
+    M::Plan: HasResource<'o, R>,
+{
+    value: <R as Resource<'o>>::Write,
+    result: Option<(u64, <R as Resource<'o>>::Read)>,
+    parents: Vec<&'o dyn Operation<'o, M>>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialOrd, PartialEq)]
-pub enum ShouldSpawn {
-    #[default]
-    Yes,
-    No(u16),
+pub struct InitialConditionOp<'o, R: Resource<'o>, M: Model<'o>>
+where
+    M::Plan: HasResource<'o, R>,
+{
+    lock: RwLock<InitialConditionOpInner<'o, R, M>>,
 }
 
-impl ShouldSpawn {
-    pub const STACK_LIMIT: u16 = 1000;
-
-    pub fn increment(self) -> Self {
-        match self {
-            Yes => No(0),
-            No(n) if n < Self::STACK_LIMIT => No(n + 1),
-            No(Self::STACK_LIMIT) => Yes,
-            _ => unreachable!(),
+impl<'o, R: Resource<'o>, M: Model<'o>> InitialConditionOp<'o, R, M>
+where
+    M::Plan: HasResource<'o, R>,
+{
+    pub fn new(value: <R as Resource<'o>>::Write) -> Self {
+        Self {
+            lock: RwLock::new(InitialConditionOpInner {
+                value,
+                result: None,
+                parents: vec![],
+            }),
         }
     }
 }
 
 #[async_trait]
-pub trait OperationBundle<M: Model> {
-    async fn unpack(
-        &self,
-        time: Duration,
-        timelines: &mut M::OperationTimelines,
-        history: Arc<M::History>,
-    );
-}
+impl<'o, R: Resource<'o>, M: Model<'o>> Operation<'o, M> for InitialConditionOp<'o, R, M>
+where
+    M::Plan: HasResource<'o, R>,
+{
+    async fn find_children(&self, _time: Epoch, _plan: &M::Plan) {}
 
-pub type GroundedOperationBundle<M> = (Duration, Box<dyn OperationBundle<M>>);
-
-pub struct OperationNode<M: Model, TAG: ResourceTypeTag> {
-    op: Arc<dyn Operation<M, TAG>>,
-
-    _parent_notifiers: Vec<Box<dyn FnOnce() + Send + Sync>>,
-}
-
-impl<M: Model, TAG: ResourceTypeTag> OperationNode<M, TAG> {
-    pub fn new(
-        op: Arc<dyn Operation<M, TAG>>,
-        parent_notifiers: Vec<Box<dyn FnOnce() + Send + Sync>>,
-    ) -> OperationNode<M, TAG> {
-        OperationNode {
-            op,
-            _parent_notifiers: parent_notifiers,
-        }
+    async fn add_parent(&self, parent: &'o dyn Operation<'o, M>) {
+        let mut write = self.lock.write().await;
+        write.parents.push(parent);
     }
 
-    pub async fn run<'a>(&'a self, b: &'a SendBump) -> RwLockReadGuard<'a, TAG::ResourceType> {
-        self.op.run(No(0), b).await.1
-    }
-
-    pub fn get_op(&self) -> Arc<dyn Operation<M, TAG>> {
-        self.op.clone()
-    }
-
-    pub fn get_op_weak(&self) -> Weak<dyn Operation<M, TAG>> {
-        Arc::downgrade(&self.op)
+    async fn remove_parent(&self, parent: &dyn Operation<'o, M>) {
+        let mut write = self.lock.write().await;
+        write.parents.retain(|p| !std::ptr::eq(*p, parent));
     }
 }
 
-impl<M: Model, TAG: ResourceTypeTag> Operation<M, TAG> for RwLock<TAG::ResourceType> {
-    fn run<'a>(
-        &'a self,
-        _should_spawn: ShouldSpawn,
-        b: &'a SendBump,
-    ) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, TAG::ResourceType>)> {
+impl<'o, R: Resource<'o> + 'o, M: Model<'o>> Writer<'o, R, M> for InitialConditionOp<'o, R, M>
+where
+    M::Histories: HasHistory<'o, R>,
+    M::Plan: HasResource<'o, R>,
+{
+    fn read<'b>(
+        &'o self,
+        histories: &'o M::Histories,
+        env: ExecEnvironment<'b>,
+    ) -> BumpedFuture<'b, (u64, RwLockReadGuard<'o, <R as Resource<'o>>::Read>)>
+    where
+        'o: 'b,
+    {
         unsafe {
-            Pin::new_unchecked(b.alloc(async move {
+            Pin::new_unchecked(env.bump.alloc(async move {
+                let read_guard = if let Ok(mut write_guard) = self.lock.try_write() {
+                    if write_guard.result.is_none() {
+                        let hash = SwiftDefaultHashBuilder::default().hash_one(
+                            bincode::serde::encode_to_vec(
+                                &write_guard.value,
+                                bincode::config::standard(),
+                            )
+                            .unwrap(),
+                        );
+                        if let Some(r) = histories.get(hash) {
+                            write_guard.result = Some((hash, r));
+                        } else {
+                            write_guard.result =
+                                Some((hash, histories.insert(hash, write_guard.value.clone())));
+                        }
+                    }
+                    write_guard.downgrade()
+                } else {
+                    self.lock.read().await
+                };
+                let hash = read_guard.result.unwrap().0;
                 (
-                    SwiftDefaultHashBuilder::default().hash_one(
-                        bincode::serde::encode_to_vec(
-                            &*(self.try_read().unwrap()),
-                            bincode::config::standard(),
-                        )
-                        .unwrap(),
-                    ),
-                    self.read().await,
+                    hash,
+                    RwLockReadGuard::map(read_guard, |o| &o.result.as_ref().unwrap().1),
                 )
             }))
         }
     }
+}
 
-    fn find_children<'a>(
-        &'a self,
-        _time: Duration,
-        _timelines: &'a M::OperationTimelines,
-        b: &'a SendBump,
-    ) -> BumpedFuture<'a, ()> {
-        unsafe { Pin::new_unchecked(b.alloc(async move {})) }
+pub enum AllModel {}
+
+impl<'o> Model<'o> for AllModel {
+    type Plan = AllPlan;
+    type InitialConditions = ();
+    type Histories = ();
+
+    fn new_plan(
+        _time: Epoch,
+        _initial_conditions: Self::InitialConditions,
+        _bump: &'o SendBump,
+    ) -> AllPlan {
+        unimplemented!()
     }
 }
 
-pub struct OperationTimeline<M: Model, TAG: ResourceTypeTag>(
-    BTreeMap<Duration, OperationNode<M, TAG>>,
-);
+pub enum AllPlan {}
 
-impl<M: Model, TAG: ResourceTypeTag> OperationTimeline<M, TAG> {
-    pub fn init(value: TAG::ResourceType) -> OperationTimeline<M, TAG> {
-        OperationTimeline(BTreeMap::from([(
-            Duration::zero(),
-            OperationNode::new(Arc::new(RwLock::new(value)), vec![]),
-        )]))
+impl<'o> Plan<'o> for AllPlan {
+    type Model = AllModel;
+
+    fn insert(&mut self, _time: Epoch, _activity: impl Activity<'o, Self::Model> + 'o) -> Uuid {
+        unimplemented!()
     }
 
-    pub fn last(&self) -> &OperationNode<M, TAG> {
-        self.0.last_key_value().unwrap().1
+    fn remove(&self, _uuid: Uuid) {
+        unimplemented!()
+    }
+}
+
+impl<R: Resource<'static>> HasResource<'static, R> for AllPlan {
+    fn find_child(&self, _time: Epoch) -> &'static dyn Writer<'static, R, Self::Model> {
+        unimplemented!()
     }
 
-    pub fn last_before(&self, time: Duration) -> (&Duration, &OperationNode<M, TAG>) {
-        self.0.range(..time).next_back().unwrap()
-    }
-
-    pub fn first_after(&self, time: Duration) -> Option<(&Duration, &OperationNode<M, TAG>)> {
-        self.0.range(time..).next()
-    }
-
-    pub fn insert(&mut self, time: Duration, value: OperationNode<M, TAG>) {
-        self.0.insert(time, value);
+    fn insert_operation(
+        &mut self,
+        _time: Epoch,
+        _op: &'static dyn Writer<'static, R, Self::Model>,
+    ) {
+        unimplemented!()
     }
 }
