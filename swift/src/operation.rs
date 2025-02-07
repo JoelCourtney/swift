@@ -1,6 +1,5 @@
 #![doc(hidden)]
 
-use std::collections::BTreeMap;
 use std::hash::BuildHasher;
 use std::pin::Pin;
 
@@ -31,12 +30,12 @@ impl ShouldSpawn {
     }
 }
 
-pub struct InitialConditionOp<R: Resource> {
-    lock: RwLock<R::Read>,
+pub struct InitialConditionOp<'h, R: Resource<'h>> {
+    lock: RwLock<<R as Resource<'h>>::Read>,
 }
 
 #[async_trait]
-impl<R: Resource, T: HasResource<R>> Operation<T> for InitialConditionOp<R> {
+impl<'h, R: Resource<'h>, T: HasResource<'h, R>> Operation<T> for InitialConditionOp<'h, R> {
     async fn find_children(&self, _time: Time, _timelines: &T) {}
 
     async fn add_parent(&self, _parent: &dyn Operation<T>) {
@@ -44,14 +43,14 @@ impl<R: Resource, T: HasResource<R>> Operation<T> for InitialConditionOp<R> {
     }
 }
 
-impl<R: Resource, T: HasResource<R>> Writer<R, T> for InitialConditionOp<R> {
-    fn read<'a>(&'a self, _history: &dyn History<R>, _should_spawn: ShouldSpawn, b: &'a SendBump) -> BumpedFuture<'a, (u64, RwLockReadGuard<'a, R::Read>)> {
+impl<'h, R: Resource<'h>, T: HasResource<'h, R>> Writer<'h, R, T> for InitialConditionOp<'h, R> {
+    fn read<'b: 'h>(&'b self, _history: &dyn History<R>, _should_spawn: ShouldSpawn, b: &'b SendBump) -> BumpedFuture<'b, (u64, RwLockReadGuard<'b, <R as Resource<'h>>::Read>)> {
         unsafe {
             Pin::new_unchecked(b.alloc(async move {
                 (
                     SwiftDefaultHashBuilder::default().hash_one(
                         bincode::serde::encode_to_vec(
-                            &*(self.lock.try_read().unwrap()),
+                            *(self.lock.try_read().unwrap()),
                             bincode::config::standard(),
                         )
                         .unwrap(),
@@ -63,32 +62,6 @@ impl<R: Resource, T: HasResource<R>> Writer<R, T> for InitialConditionOp<R> {
     }
 }
 
-pub struct OperationTimeline<'a, R: Resource, T: HasResource<R>>(
-    BTreeMap<Time, &'a dyn Writer<R, T>>
-);
 
-impl<'a, R: Resource, T: HasResource<R>> OperationTimeline<'a, R, T> {
-    pub fn init(time: Time, initial_condition: &dyn Writer<R, T>) -> OperationTimeline<R, T> {
-        OperationTimeline(BTreeMap::from([(
-            time,
-            initial_condition
-        )]))
-    }
 
-    pub fn last(&self) -> &dyn Writer<R, T> {
-        *self.0.last_key_value().unwrap().1
-    }
 
-    pub fn last_before(&self, time: Time) -> (Time, &dyn Writer<R, T>) {
-        let t = self.0.range(..time).next_back().unwrap();
-        (*t.0, *t.1)
-    }
-
-    pub fn first_after(&self, time: Time) -> Option<(Time, &dyn Writer<R, T>)> {
-        self.0.range(time..).next().map(|t| (*t.0, *t.1))
-    }
-
-    pub fn insert(&'a mut self, time: Time, value: &'a dyn Writer<R, T>) {
-        self.0.insert(time, value);
-    }
-}

@@ -4,40 +4,30 @@ use std::ops::Deref;
 use dashmap::DashMap;
 use elsa::sync::FrozenMap;
 use stable_deref_trait::StableDeref;
+use crate::{History, Resource};
 
 pub type SwiftDefaultHashBuilder = foldhash::fast::FixedState;
 
-pub trait History<'a, R> where Self: 'a {
-    type HistoryEntry: Copy + 'a;
+pub struct CopyHistory<'h, R: Resource<'h>>(DashMap<u64, <R as Resource<'h>>::Write, PassThroughHashBuilder>) where <R as Resource<'h>>::Write: Copy;
 
-    fn insert(&'a self, hash: u64, value: R) -> Self::HistoryEntry;
-    fn get(&'a self, hash: u64) -> Option<Self::HistoryEntry>;
-}
-
-pub struct CopyHistory<R: Copy>(DashMap<u64, R, PassThroughHashBuilder>);
-
-impl<'a, R: Copy + 'a> History<'a, R> for CopyHistory<R> {
-    type HistoryEntry = R;
-
-    fn insert(&'a self, hash: u64, value: R) -> R {
+impl<'h, V: Copy + 'h, R: for<'b> Resource<'b, Read=V, Write=V> + 'h> History<'h, R> for CopyHistory<'h, R> {
+    fn insert(&self, hash: u64, value: <R as Resource<'_>>::Write) -> <R as Resource<'_>>::Read {
         self.0.insert(hash, value).unwrap()
     }
 
-    fn get(&'a self, hash: u64) -> Option<R> {
+    fn get(&self, hash: u64) -> Option<<R as Resource<'_>>::Read> {
         self.0.get(&hash).map(|r| *r)
     }
 }
 
-pub struct IndirectHistory<R: StableDeref>(FrozenMap<u64, R>);
+pub struct IndirectHistory<'h, R: Resource<'h>>(FrozenMap<u64, <R as Resource<'h>>::Write>) where <R as Resource<'h>>::Write: StableDeref;
 
-impl<'a, R: StableDeref + 'a> History<'a, R> for IndirectHistory<R> where Self: 'a {
-    type HistoryEntry = &'a <R as Deref>::Target;
-
-    fn insert(&'a self, hash: u64, value: R) -> Self::HistoryEntry {
+impl<'h, V: StableDeref + 'h, R: Resource<'h, Write=V, Read=&'h <V as Deref>::Target>> History<'h, R> for IndirectHistory<'h, R> where Self: 'h {
+    fn insert(&'h self, hash: u64, value: <R as Resource<'h>>::Write) -> <R as Resource<'h>>::Read {
         self.0.insert(hash, value)
     }
 
-    fn get(&'a self, hash: u64) -> Option<Self::HistoryEntry> {
+    fn get(&'h self, hash: u64) -> Option<<R as Resource<'h>>::Read> {
         self.0.get(&hash)
     }
 }

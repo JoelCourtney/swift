@@ -3,7 +3,7 @@ use derive_more::Deref;
 use std::future::Future;
 use std::pin::Pin;
 
-pub type BumpedFuture<'a, T> = Pin<&'a mut (dyn Future<Output = T> + Send + 'a)>;
+pub type BumpedFuture<'b, T> = Pin<&'b mut (dyn Future<Output = T> + Send + 'b)>;
 
 #[derive(Deref, Default)]
 pub struct SendBump(Bump);
