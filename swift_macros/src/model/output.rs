@@ -35,7 +35,7 @@ impl ToTokens for Model {
                 type InitialConditions = #initial_conditions_name<'o>;
                 type Histories = #histories_name<'o>;
 
-                fn new_plan(time: swift::Epoch, initial_conditions: Self::InitialConditions, bump: &'o swift::exec::SendBump) -> Self::Plan {
+                fn new_plan(time: swift::Time, initial_conditions: Self::InitialConditions, bump: &'o swift::exec::SendBump) -> Self::Plan {
                     #plan_name {
                         activities: std::collections::HashMap::new(),
                         bump,
@@ -53,7 +53,7 @@ impl ToTokens for Model {
             }
 
             #visibility struct #plan_name<'o> {
-                activities: std::collections::HashMap<swift::ActivityId, (swift::Epoch, &'o dyn swift::Activity<'o, #name>)>,
+                activities: std::collections::HashMap<swift::ActivityId, (swift::Time, &'o dyn swift::Activity<'o, #name>)>,
                 bump: &'o swift::exec::SendBump,
                 #(#timeline_names: swift::Timeline<'o, #resource_paths, #name>,)*
                 id_counter: u32
@@ -79,7 +79,7 @@ impl ToTokens for Model {
 
                 type Model = #name;
 
-                fn insert(&mut self, time: swift::Epoch, activity: impl swift::Activity<'o, #name> + 'o) -> swift::ActivityId {
+                fn insert(&mut self, time: swift::Time, activity: impl swift::Activity<'o, #name> + 'o) -> swift::ActivityId {
                     let id = swift::ActivityId::new(self.id_counter);
                     self.id_counter += 1;
                     let activity = self.bump.alloc(activity);
@@ -97,10 +97,10 @@ impl ToTokens for Model {
 
             #(
                 impl<'o> swift::HasResource<'o, #resource_paths> for #plan_name<'o> {
-                    fn find_child(&self, time: swift::Epoch) -> &'o (dyn swift::Writer<'o, #resource_paths, Self::Model>) {
+                    fn find_child(&self, time: swift::Time) -> &'o (dyn swift::Writer<'o, #resource_paths, Self::Model>) {
                         self.#timeline_names.last_before(time).1
                     }
-                    fn insert_operation(&mut self, time: swift::Epoch, op: &'o dyn swift::Writer<'o, #resource_paths, Self::Model>) {
+                    fn insert_operation(&mut self, time: swift::Time, op: &'o dyn swift::Writer<'o, #resource_paths, Self::Model>) {
                         self.#timeline_names.insert(time, op);
                     }
                 }

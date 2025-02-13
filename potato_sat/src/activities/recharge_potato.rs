@@ -10,7 +10,7 @@ pub struct RechargePotato {
 
 activity! {
     for RechargePotato {
-        let end = start + Duration::from_hours(1.0);
+        let end = start + Duration::hours(1);
         @(end) b: Battery -> b, m: Mode {
             b += 4.0;
             m = "help".to_string();

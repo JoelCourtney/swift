@@ -16,9 +16,9 @@ pub mod exec;
 pub mod history;
 pub mod operation;
 pub mod reexports;
+pub mod time;
 
-pub use hifitime::Duration;
-pub use hifitime::Epoch;
+pub use time::{Duration, Time};
 
 pub trait Resource<'h>: Sized {
     const PIECEWISE_CONSTANT: bool;
@@ -39,7 +39,7 @@ pub trait Resource<'h>: Sized {
 pub trait Plan<'o>: Sync {
     type Model: Model<'o>;
 
-    fn insert(&mut self, time: Epoch, activity: impl Activity<'o, Self::Model> + 'o) -> ActivityId;
+    fn insert(&mut self, time: Time, activity: impl Activity<'o, Self::Model> + 'o) -> ActivityId;
     fn remove(&self, id: ActivityId);
 }
 
@@ -52,8 +52,8 @@ impl ActivityId {
 }
 
 pub trait HasResource<'o, R: Resource<'o>>: Plan<'o> {
-    fn find_child(&self, time: Epoch) -> &'o dyn Writer<'o, R, Self::Model>;
-    fn insert_operation(&mut self, time: Epoch, op: &'o dyn Writer<'o, R, Self::Model>);
+    fn find_child(&self, time: Time) -> &'o dyn Writer<'o, R, Self::Model>;
+    fn insert_operation(&mut self, time: Time, op: &'o dyn Writer<'o, R, Self::Model>);
 }
 
 pub trait Model<'o>: Sync {
@@ -62,13 +62,13 @@ pub trait Model<'o>: Sync {
     type Histories: 'o + Sync + Default;
 
     fn new_plan(
-        time: Epoch,
+        time: Time,
         initial_conditions: Self::InitialConditions,
         bump: &'o SendBump,
     ) -> Self::Plan;
 }
 
-pub struct Timeline<'o, R: Resource<'o>, M: Model<'o>>(BTreeMap<Epoch, &'o (dyn Writer<'o, R, M>)>)
+pub struct Timeline<'o, R: Resource<'o>, M: Model<'o>>(BTreeMap<Time, &'o (dyn Writer<'o, R, M>)>)
 where
     M::Plan: HasResource<'o, R>;
 
@@ -76,7 +76,7 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Timeline<'o, R, M>
 where
     M::Plan: HasResource<'o, R>,
 {
-    pub fn init(time: Epoch, initial_condition: &'o (dyn Writer<'o, R, M>)) -> Timeline<'o, R, M> {
+    pub fn init(time: Time, initial_condition: &'o (dyn Writer<'o, R, M>)) -> Timeline<'o, R, M> {
         Timeline(BTreeMap::from([(time, initial_condition)]))
     }
 
@@ -84,30 +84,30 @@ where
         *self.0.last_key_value().unwrap().1
     }
 
-    pub fn last_before(&self, time: Epoch) -> (Epoch, &'o (dyn Writer<'o, R, M>)) {
+    pub fn last_before(&self, time: Time) -> (Time, &'o (dyn Writer<'o, R, M>)) {
         let t = self.0.range(..time).next_back().unwrap_or_else(|| {
             panic!("No writers found before {time}. Did you insert before the initial conditions?")
         });
         (*t.0, *t.1)
     }
 
-    pub fn first_after(&self, time: Epoch) -> Option<(Epoch, &'o (dyn Writer<'o, R, M>))> {
+    pub fn first_after(&self, time: Time) -> Option<(Time, &'o (dyn Writer<'o, R, M>))> {
         self.0.range(time..).next().map(move |t| (*t.0, *t.1))
     }
 
-    pub fn insert(&mut self, time: Epoch, value: &'o (dyn Writer<'o, R, M>)) {
+    pub fn insert(&mut self, time: Time, value: &'o (dyn Writer<'o, R, M>)) {
         self.0.insert(time, value);
     }
 }
 
 // Auto implemented for models that contain all the resources the activity touches
 pub trait Activity<'o, M: Model<'o>>: Send + Sync {
-    fn decompose(&'o self, start: Epoch, plan: &mut M::Plan, bump: &'o SendBump);
+    fn decompose(&'o self, start: Time, plan: &mut M::Plan, bump: &'o SendBump);
 }
 
 #[async_trait]
 pub trait Operation<'o, M: Model<'o>>: Sync {
-    async fn find_children(&self, time: Epoch, plan: &M::Plan);
+    async fn find_children(&self, time: Time, plan: &M::Plan);
     async fn add_parent(&self, parent: &'o dyn Operation<'o, M>);
     async fn remove_parent(&self, parent: &dyn Operation<'o, M>);
 }

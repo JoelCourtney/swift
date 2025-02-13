@@ -257,7 +257,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         #[swift::reexports::async_trait::async_trait]
         impl<'o, M: swift::Model<'o>> swift::Operation<'o, M> for #op<'o, M>
         where #plan_bound {
-            async fn find_children(&self, time: swift::Epoch, plan: &M::Plan) {
+            async fn find_children(&self, time: swift::Time, plan: &M::Plan) {
                 let mut write = self.inner.write().await;
                 #(
                     let new_child = <M::Plan as swift::HasResource<'o, #all_read_paths>>::find_child(plan, time);

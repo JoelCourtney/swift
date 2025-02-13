@@ -1,6 +1,6 @@
 use swift::exec::{ExecEnvironment, SendBump, EXECUTOR};
 use swift::history::{CopyHistory, DerefHistory};
-use swift::{activity, model, Duration, Epoch, Model, Plan, Resource};
+use swift::{activity, model, Duration, Model, Plan, Resource, Time};
 
 model! {
     pub Perf {
@@ -55,7 +55,7 @@ activity! {
 fn main() {
     let bump = SendBump::new();
     let histories = PerfHistories::default();
-    let plan_start = Epoch::now().unwrap();
+    let plan_start = Time::zero_todo();
     let mut plan = Perf::new_plan(
         plan_start,
         PerfInitialConditions {
@@ -65,22 +65,24 @@ fn main() {
         &bump,
     );
 
-    let offset = Duration::from_microseconds(1.0);
+    let offset = Duration::microseconds(1);
 
     for i in 0..10000000 {
         plan.insert(
-            plan_start + offset + 3 * i * Duration::from_seconds(1.0),
+            plan_start + offset + Duration::seconds(1) * 3 * i,
             IncrementA,
         );
         plan.insert(
-            plan_start + offset + 3 * i * Duration::from_seconds(1.0) + Duration::from_seconds(1.0),
+            plan_start + offset + Duration::seconds(1) * 3 * i + Duration::seconds(1),
             ConvertAToB,
         );
         plan.insert(
-            plan_start + offset + 3 * i * Duration::from_seconds(1.0) + Duration::from_seconds(2.0),
+            plan_start + offset + Duration::seconds(1) * 3 * i + Duration::seconds(2),
             ConvertBToA,
         );
     }
+
+    println!("built");
 
     let futures_bump = SendBump::new();
     let future = plan

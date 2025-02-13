@@ -5,7 +5,9 @@ use std::pin::Pin;
 
 use crate::exec::{BumpedFuture, ExecEnvironment, SendBump};
 use crate::history::SwiftDefaultHashBuilder;
-use crate::{Activity, ActivityId, Epoch, HasHistory, HasResource, Model, Operation, Plan, Resource, Writer};
+use crate::{
+    Activity, ActivityId, HasHistory, HasResource, Model, Operation, Plan, Resource, Time, Writer,
+};
 use async_trait::async_trait;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
@@ -45,7 +47,7 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Operation<'o, M> for InitialConditionOp<
 where
     M::Plan: HasResource<'o, R>,
 {
-    async fn find_children(&self, _time: Epoch, _plan: &M::Plan) {}
+    async fn find_children(&self, _time: Time, _plan: &M::Plan) {}
 
     async fn add_parent(&self, parent: &'o dyn Operation<'o, M>) {
         let mut write = self.lock.write().await;
@@ -111,7 +113,7 @@ impl<'o> Model<'o> for AllModel {
     type Histories = ();
 
     fn new_plan(
-        _time: Epoch,
+        _time: Time,
         _initial_conditions: Self::InitialConditions,
         _bump: &'o SendBump,
     ) -> AllPlan {
@@ -124,7 +126,11 @@ pub enum AllPlan {}
 impl<'o> Plan<'o> for AllPlan {
     type Model = AllModel;
 
-    fn insert(&mut self, _time: Epoch, _activity: impl Activity<'o, Self::Model> + 'o) -> ActivityId {
+    fn insert(
+        &mut self,
+        _time: Time,
+        _activity: impl Activity<'o, Self::Model> + 'o,
+    ) -> ActivityId {
         unimplemented!()
     }
 
@@ -134,15 +140,11 @@ impl<'o> Plan<'o> for AllPlan {
 }
 
 impl<R: Resource<'static>> HasResource<'static, R> for AllPlan {
-    fn find_child(&self, _time: Epoch) -> &'static dyn Writer<'static, R, Self::Model> {
+    fn find_child(&self, _time: Time) -> &'static dyn Writer<'static, R, Self::Model> {
         unimplemented!()
     }
 
-    fn insert_operation(
-        &mut self,
-        _time: Epoch,
-        _op: &'static dyn Writer<'static, R, Self::Model>,
-    ) {
+    fn insert_operation(&mut self, _time: Time, _op: &'static dyn Writer<'static, R, Self::Model>) {
         unimplemented!()
     }
 }
