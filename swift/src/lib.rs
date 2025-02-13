@@ -80,15 +80,16 @@ where
         Timeline(BTreeMap::from([(time, initial_condition)]))
     }
 
-    pub fn last(&self) -> &'o (dyn Writer<'o, R, M>) {
-        *self.0.last_key_value().unwrap().1
+    pub fn last(&self) -> (Time, &'o (dyn Writer<'o, R, M>)) {
+        let tup = self.0.last_key_value().unwrap();
+        (*tup.0, *tup.1)
     }
 
     pub fn last_before(&self, time: Time) -> (Time, &'o (dyn Writer<'o, R, M>)) {
-        let t = self.0.range(..time).next_back().unwrap_or_else(|| {
+        let tup = self.0.range(..time).next_back().unwrap_or_else(|| {
             panic!("No writers found before {time}. Did you insert before the initial conditions?")
         });
-        (*t.0, *t.1)
+        (*tup.0, *tup.1)
     }
 
     pub fn first_after(&self, time: Time) -> Option<(Time, &'o (dyn Writer<'o, R, M>))> {

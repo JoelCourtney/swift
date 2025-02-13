@@ -98,7 +98,12 @@ impl ToTokens for Model {
             #(
                 impl<'o> swift::HasResource<'o, #resource_paths> for #plan_name<'o> {
                     fn find_child(&self, time: swift::Time) -> &'o (dyn swift::Writer<'o, #resource_paths, Self::Model>) {
-                        self.#timeline_names.last_before(time).1
+                        let (last_time, last_op) = self.#timeline_names.last();
+                        if last_time < time {
+                            last_op
+                        } else {
+                            self.#timeline_names.last_before(time).1
+                        }
                     }
                     fn insert_operation(&mut self, time: swift::Time, op: &'o dyn swift::Writer<'o, #resource_paths, Self::Model>) {
                         self.#timeline_names.insert(time, op);

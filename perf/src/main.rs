@@ -88,6 +88,7 @@ fn main() {
     let future = plan
         .a_operation_timeline
         .last()
+        .1
         .read(&histories, ExecEnvironment::new(&futures_bump));
 
     let result = futures_lite::future::block_on(EXECUTOR.run(future));
