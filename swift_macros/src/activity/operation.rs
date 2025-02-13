@@ -285,7 +285,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
                             if write.output.is_none() {
                                 let result = if env.should_spawn == swift::exec::ShouldSpawn::Yes {
                                     let op_internal = &write;
-                                    env.executor.spawn_scoped(async move {
+                                    swift::exec::EXECUTOR.spawn_scoped(async move {
                                         let new_bump = swift::exec::SendBump::new();
                                         let env = swift::exec::ExecEnvironment::new(&new_bump);
                                         #run_internal

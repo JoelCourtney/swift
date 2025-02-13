@@ -5,11 +5,10 @@ use derive_more::Deref;
 use std::future::Future;
 use std::pin::Pin;
 
-static EXECUTOR: StaticExecutor = StaticExecutor::new();
+pub static EXECUTOR: StaticExecutor = StaticExecutor::new();
 
 #[derive(Copy, Clone)]
 pub struct ExecEnvironment<'b> {
-    pub executor: &'static StaticExecutor,
     pub bump: &'b SendBump,
     pub should_spawn: ShouldSpawn,
 }
@@ -17,7 +16,6 @@ pub struct ExecEnvironment<'b> {
 impl<'b> ExecEnvironment<'b> {
     pub fn new(b: &'b SendBump) -> Self {
         ExecEnvironment {
-            executor: &EXECUTOR,
             bump: b,
             should_spawn: No(0),
         }
@@ -25,7 +23,6 @@ impl<'b> ExecEnvironment<'b> {
 
     pub fn increment(self) -> Self {
         ExecEnvironment {
-            executor: self.executor,
             bump: self.bump,
             should_spawn: self.should_spawn.increment(),
         }
