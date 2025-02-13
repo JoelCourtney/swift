@@ -5,10 +5,9 @@ use std::pin::Pin;
 
 use crate::exec::{BumpedFuture, ExecEnvironment, SendBump};
 use crate::history::SwiftDefaultHashBuilder;
-use crate::{Activity, Epoch, HasHistory, HasResource, Model, Operation, Plan, Resource, Writer};
+use crate::{Activity, ActivityId, Epoch, HasHistory, HasResource, Model, Operation, Plan, Resource, Writer};
 use async_trait::async_trait;
 use tokio::sync::{RwLock, RwLockReadGuard};
-use uuid::Uuid;
 
 pub struct InitialConditionOpInner<'o, R: Resource<'o>, M: Model<'o>>
 where
@@ -125,11 +124,11 @@ pub enum AllPlan {}
 impl<'o> Plan<'o> for AllPlan {
     type Model = AllModel;
 
-    fn insert(&mut self, _time: Epoch, _activity: impl Activity<'o, Self::Model> + 'o) -> Uuid {
+    fn insert(&mut self, _time: Epoch, _activity: impl Activity<'o, Self::Model> + 'o) -> ActivityId {
         unimplemented!()
     }
 
-    fn remove(&self, _uuid: Uuid) {
+    fn remove(&self, _id: ActivityId) {
         unimplemented!()
     }
 }

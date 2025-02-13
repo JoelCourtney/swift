@@ -25,4 +25,3 @@ elsa = "1.11.0"
 stable_deref_trait = "1.2.0"
 hifitime = "4.0.2"
 async-executor = { version = "1.13.1", features = ["static"] }
-uuid = { version = "1.13.1", features = ["v4"] }

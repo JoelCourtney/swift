@@ -43,6 +43,7 @@ impl ToTokens for Model {
                             time,
                             bump.alloc(swift::operation::InitialConditionOp::new(initial_conditions.#resource_names))
                         ),)*
+                        id_counter: 0
                     }
                 }
             }
@@ -52,9 +53,10 @@ impl ToTokens for Model {
             }
 
             #visibility struct #plan_name<'o> {
-                activities: std::collections::HashMap<swift::reexports::uuid::Uuid, (swift::Epoch, &'o dyn swift::Activity<'o, #name>)>,
+                activities: std::collections::HashMap<swift::ActivityId, (swift::Epoch, &'o dyn swift::Activity<'o, #name>)>,
                 bump: &'o swift::exec::SendBump,
                 #(#timeline_names: swift::Timeline<'o, #resource_paths, #name>,)*
+                id_counter: u32
             }
 
             #[derive(Default)]
@@ -77,17 +79,18 @@ impl ToTokens for Model {
 
                 type Model = #name;
 
-                fn insert(&mut self, time: swift::Epoch, activity: impl swift::Activity<'o, #name> + 'o) -> swift::reexports::uuid::Uuid {
-                    let uuid = swift::reexports::uuid::Uuid::new_v4();
+                fn insert(&mut self, time: swift::Epoch, activity: impl swift::Activity<'o, #name> + 'o) -> swift::ActivityId {
+                    let id = swift::ActivityId::new(self.id_counter);
+                    self.id_counter += 1;
                     let activity = self.bump.alloc(activity);
-                    self.activities.insert(uuid, (time, activity));
-                    let activity = &self.activities.get(&uuid).unwrap().1;
+                    self.activities.insert(id, (time, activity));
+                    let activity = &self.activities.get(&id).unwrap().1;
 
                     activity.decompose(time, self, &self.bump);
 
-                    uuid
+                    id
                 }
-                fn remove(&self, _uuid: swift::reexports::uuid::Uuid) {
+                fn remove(&self, _id: swift::ActivityId) {
                     todo!()
                 }
             }

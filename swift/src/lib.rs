@@ -6,12 +6,11 @@
 use crate::exec::{BumpedFuture, ExecEnvironment, SendBump};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 pub use swift_macros::{activity, model};
 use tokio::sync::RwLockReadGuard;
-use uuid::Uuid;
 
 pub mod exec;
 pub mod history;
@@ -23,7 +22,6 @@ pub use hifitime::Epoch;
 
 pub trait Resource<'h>: Sized {
     const PIECEWISE_CONSTANT: bool;
-
     type Read: 'h + Copy + Send + Sync + Serialize;
     type Write: 'static
         + From<Self::Read>
@@ -41,8 +39,16 @@ pub trait Resource<'h>: Sized {
 pub trait Plan<'o>: Sync {
     type Model: Model<'o>;
 
-    fn insert(&mut self, time: Epoch, activity: impl Activity<'o, Self::Model> + 'o) -> Uuid;
-    fn remove(&self, uuid: Uuid);
+    fn insert(&mut self, time: Epoch, activity: impl Activity<'o, Self::Model> + 'o) -> ActivityId;
+    fn remove(&self, id: ActivityId);
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct ActivityId(u32);
+impl ActivityId {
+    pub fn new(id: u32) -> ActivityId {
+        ActivityId(id)
+    }
 }
 
 pub trait HasResource<'o, R: Resource<'o>>: Plan<'o> {
