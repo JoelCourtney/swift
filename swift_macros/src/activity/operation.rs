@@ -54,7 +54,7 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
                 let name = format_ident!("{}", s.trim());
                 match temp_reads.get(&name) {
                     None => panic!("write variable doesn't have a resource type: {name}"),
-                    Some(ty) => read_writes.insert(name, ty.clone()),
+                    Some(path) => read_writes.insert(name, path.clone()),
                 };
             }
             Some(c) => {
@@ -62,7 +62,11 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
                 let path: TokenStream = s[c + 1..]
                     .parse()
                     .expect("could not parse write resource type path");
-                writes.insert(name, path);
+                if temp_reads.contains_key(&name) {
+                    read_writes.insert(name, path);
+                } else {
+                    writes.insert(name, path);
+                }
             }
         }
     });
@@ -188,7 +192,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         let new_env = env.increment();
 
         #(let (#read_only_resource_hashes, #read_only_variables) = op_internal.#read_only_variables
-                .read(histories, env)
+                .read(histories, new_env)
                 .await;
         )*
         #(let mut #write_only_variables = <#write_only_paths as swift::Resource<'o>>::Write::default();)*
@@ -196,7 +200,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         #(
             let (#read_write_resource_hashes, mut #read_write_variables): (u64, <#read_write_paths as swift::Resource<'o>>::Write) = {
                 let (hash, #read_write_variables) = op_internal.#read_write_variables
-                    .read(histories, env)
+                    .read(histories, new_env)
                     .await;
                 (hash, (*#read_write_variables).into())
             };

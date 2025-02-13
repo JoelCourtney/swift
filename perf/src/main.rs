@@ -67,7 +67,7 @@ fn main() {
 
     let offset = Duration::from_microseconds(1.0);
 
-    for i in 0..1000 {
+    for i in 0..10000000 {
         plan.insert(
             plan_start + offset + 3 * i * Duration::from_seconds(1.0),
             IncrementA,
