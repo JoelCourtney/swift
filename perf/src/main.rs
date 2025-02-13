@@ -1,3 +1,4 @@
+use swift::exec::{ExecEnvironment, SendBump, EXECUTOR};
 use swift::history::{CopyHistory, DerefHistory};
 use swift::{activity, model, Duration, Epoch, Model, Plan, Resource};
 
@@ -52,8 +53,8 @@ activity! {
 }
 
 fn main() {
-    let bump = swift::exec::SendBump::new();
-    let _histories = PerfHistories::default();
+    let bump = SendBump::new();
+    let histories = PerfHistories::default();
     let plan_start = Epoch::now().unwrap();
     let mut plan = Perf::new_plan(
         plan_start,
@@ -80,4 +81,14 @@ fn main() {
             ConvertBToA,
         );
     }
+
+    let futures_bump = SendBump::new();
+    let future = plan
+        .a_operation_timeline
+        .last()
+        .read(&histories, ExecEnvironment::new(&futures_bump));
+
+    let result = futures_lite::future::block_on(EXECUTOR.run(future));
+
+    println!("{}", result.1);
 }

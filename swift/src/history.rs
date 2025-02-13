@@ -27,7 +27,8 @@ impl<'h, V: Copy + 'h, R: for<'b> Resource<'b, Read = V, Write = V> + 'h> HasHis
     for CopyHistory<'h, R>
 {
     fn insert(&self, hash: u64, value: <R as Resource<'_>>::Write) -> <R as Resource<'_>>::Read {
-        self.0.insert(hash, value).unwrap()
+        self.0.insert(hash, value);
+        value
     }
 
     fn get(&self, hash: u64) -> Option<<R as Resource<'_>>::Read> {
