@@ -1,4 +1,6 @@
-use crate::exec::ShouldSpawn::No;
+#![doc(hidden)]
+
+use crate::exec::ShouldSpawn::*;
 use async_executor::StaticExecutor;
 use bumpalo::Bump;
 use derive_more::Deref;
@@ -6,6 +8,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub static EXECUTOR: StaticExecutor = StaticExecutor::new();
+pub const NUM_THREADS: usize = 4;
+pub const STACK_LIMIT: u16 = 1000;
 
 #[derive(Copy, Clone)]
 pub struct ExecEnvironment<'b> {
@@ -33,7 +37,6 @@ pub type BumpedFuture<'b, T> = Pin<&'b mut (dyn Future<Output = T> + Send + 'b)>
 
 #[derive(Deref, Default)]
 pub struct SendBump(Bump);
-unsafe impl Send for SendBump {}
 unsafe impl Sync for SendBump {}
 
 impl SendBump {
@@ -50,13 +53,11 @@ pub enum ShouldSpawn {
 }
 
 impl ShouldSpawn {
-    pub const STACK_LIMIT: u16 = 1000;
-
     pub fn increment(self) -> Self {
         match self {
-            ShouldSpawn::Yes => ShouldSpawn::No(0),
-            ShouldSpawn::No(n) if n < Self::STACK_LIMIT => ShouldSpawn::No(n + 1),
-            ShouldSpawn::No(Self::STACK_LIMIT) => ShouldSpawn::Yes,
+            Yes => No(0),
+            No(n) if n < STACK_LIMIT => No(n + 1),
+            No(STACK_LIMIT) => Yes,
             _ => unreachable!(),
         }
     }

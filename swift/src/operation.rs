@@ -1,15 +1,31 @@
 #![doc(hidden)]
 
-use std::hash::BuildHasher;
-use std::pin::Pin;
-
 use crate::exec::{BumpedFuture, ExecEnvironment, SendBump};
-use crate::history::SwiftDefaultHashBuilder;
-use crate::{
-    Activity, ActivityId, HasHistory, HasResource, Model, Operation, Plan, Resource, Time, Writer,
-};
+use crate::history::{HasHistory, SwiftDefaultHashBuilder};
+use crate::timeline::HasResource;
+use crate::{Activity, ActivityId, Model, Plan, Resource, Time};
 use async_trait::async_trait;
+use std::hash::BuildHasher;
+use std::ops::RangeBounds;
+use std::pin::Pin;
 use tokio::sync::{RwLock, RwLockReadGuard};
+
+#[async_trait]
+pub trait Operation<'o, M: Model<'o>>: Sync {
+    async fn find_children(&self, time: Time, plan: &M::Plan);
+    async fn add_parent(&self, parent: &'o dyn Operation<'o, M>);
+    async fn remove_parent(&self, parent: &dyn Operation<'o, M>);
+}
+
+pub trait Writer<'o, R: Resource<'o>, M: Model<'o>>: Operation<'o, M> {
+    fn read<'b>(
+        &'o self,
+        histories: &'o M::Histories,
+        env: ExecEnvironment<'b>,
+    ) -> BumpedFuture<'b, (u64, RwLockReadGuard<'o, <R as Resource<'o>>::Read>)>
+    where
+        'o: 'b;
+}
 
 pub struct InitialConditionOpInner<'o, R: Resource<'o>, M: Model<'o>>
 where
@@ -146,5 +162,12 @@ impl<R: Resource<'static>> HasResource<'static, R> for AllPlan {
 
     fn insert_operation(&mut self, _time: Time, _op: &'static dyn Writer<'static, R, Self::Model>) {
         unimplemented!()
+    }
+
+    fn get_operations(
+        &self,
+        _bounds: impl RangeBounds<Time>,
+    ) -> Vec<(Time, &'static dyn Writer<'static, R, Self::Model>)> {
+        todo!()
     }
 }

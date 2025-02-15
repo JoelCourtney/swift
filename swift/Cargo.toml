@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 authors = ["Joel Courtney <joel.e.courtney@gmail.com>"]
-description = "A discrete event simulation engine similar to NASA-AMMOS's Aerie."
+description = "A discrete event simulation engine similar to NASA-AMMOS's Aerie-Merlin."
 readme = "README.md"
 repository = "https://github.com/JoelCourtney/swift"
 license = "MIT OR Apache-2.0"
@@ -12,15 +12,50 @@ keywords = ["simulation"]
 categories = ["aerospace::simulation", "simulation"]
 
 [dependencies]
-serde = { version = "1.0.210", features = ["derive"] }
-derive_more = { version = "2.0.1", features = ["full"] }
-tokio = { version = "1.43.0", features = ["sync"] }
-async-trait = "0.1.86"
-bincode = { version = "2.0.0-rc.3", features = ["serde"] }
+
+## INTERNAL
 swift_macros = { path = "../swift_macros" }
-dashmap = { version = "6.1.0", features = ["serde"] }
+
+## SERIALIZATION
+# For serializing/deserializing plans, sim history, etc.
+# Also used to hash initial condition nodes.
+serde = { version = "1.0.210", features = ["derive"] }
+# A non-self-describing efficient serde backend.
+bincode = { version = "2.0.0-rc.3", features = ["serde"] }
+
+## HISTORY
+# A fast stable hashing algorithm, used for history caching.
 foldhash = "0.1.4"
-bumpalo = { version = "3.17.0", features = ["boxed"] }
+# A concurrent hashmap for storing history. Used for copiable resources.
+dashmap = { version = "6.1.0", features = ["serde"] }
+# A frozen concurrent hashmap that allows holding references across reallocations.
+# Used for non-copiable resources.
 elsa = "1.11.0"
+# The central trait that `elsa` depends on.
 stable_deref_trait = "1.2.0"
+
+## MEMORY
+# An arena allocator used for Futures during simulation, and operations trait objects.
+bumpalo = { version = "3.17.0", features = ["boxed"] }
+
+## ASYNC
+# A simple async executor, chosen because it is the only one that supports scoped spawns
+# where neither the future or its output live for 'static.
 async-executor = { version = "1.13.1", features = ["static"] }
+# The built-in async trait feature is not object-safe because it uses static dispath.
+# This crate uses dynamic dispatch.
+async-trait = "0.1.86"
+# Used for the thread shutdown signal.
+async-channel = "2.3.1"
+# Used to block on and join futures in a sync context.
+futures = "0.3.31"
+# Used only for its async semaphore-based objects like RW locks.
+tokio = { version = "1.43.0", default-features = false, features = ["sync"] }
+
+## TIME
+# A timekeeping library made for space missions, that follows the same standards as SPICE.
+hifitime = "4.0.2"
+
+## MISC
+# Used for convience, not having to manually implement simple traits.
+derive_more = { version = "2.0.1", features = ["deref"] }

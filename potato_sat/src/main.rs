@@ -10,10 +10,11 @@ model! {
     }
 }
 
-struct Battery;
+#[derive(Debug)]
+enum Battery {}
 
 impl<'h> Resource<'h> for Battery {
-    const PIECEWISE_CONSTANT: bool = true;
+    const STATIC: bool = true;
 
     type Read = f32;
     type Write = f32;
@@ -21,10 +22,11 @@ impl<'h> Resource<'h> for Battery {
     type History = CopyHistory<'h, Self>;
 }
 
-struct Mode;
+#[derive(Debug)]
+enum Mode {}
 
 impl<'h> Resource<'h> for Mode {
-    const PIECEWISE_CONSTANT: bool = true;
+    const STATIC: bool = true;
     type Read = &'h str;
     type Write = String;
     type History = DerefHistory<'h, Self>;

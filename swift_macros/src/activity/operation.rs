@@ -217,12 +217,12 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
             state.finish()
         };
 
-        let (#(#all_write_variables),*) = if let Some(#first_write_variable) = <M::Histories as swift::HasHistory<#first_write_path>>::get(histories, hash) {
-            #(let #all_but_one_write_variables = <M::Histories as swift::HasHistory<#all_but_one_write_paths>>::get(histories, hash).unwrap();)*
+        let (#(#all_write_variables),*) = if let Some(#first_write_variable) = <M::Histories as swift::history::HasHistory<#first_write_path>>::get(histories, hash) {
+            #(let #all_but_one_write_variables = <M::Histories as swift::history::HasHistory<#all_but_one_write_paths>>::get(histories, hash).unwrap();)*
             (#(#all_write_variables),*)
         } else {
             { #body }
-            #(let #all_write_variables = <M::Histories as swift::HasHistory<#all_write_paths>>::insert(histories, hash, #all_write_variables);)*
+            #(let #all_write_variables = <M::Histories as swift::history::HasHistory<#all_write_paths>>::insert(histories, hash, #all_write_variables);)*
             (#(#all_write_variables),*)
         };
 
@@ -235,18 +235,18 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     };
 
     let plan_bound = quote! {
-        M::Plan: #(swift::HasResource<'o, #all_paths>)+*
+        M::Plan: #(swift::timeline::HasResource<'o, #all_paths>)+*
     };
 
     let history_bound = quote! {
-        M::Histories: #(swift::HasHistory<'o, #all_write_paths>)+*
+        M::Histories: #(swift::history::HasHistory<'o, #all_write_paths>)+*
     };
 
     quote! {
         struct #op_inner<'o, M: swift::Model<'o>> {
-            #(#all_read_variables: &'o dyn swift::Writer<'o, #all_read_paths, M>,)*
+            #(#all_read_variables: &'o dyn swift::operation::Writer<'o, #all_read_paths, M>,)*
             output: Option<#output<'o>>,
-            parents: Vec<&'o dyn swift::Operation<'o, M>>
+            parents: Vec<&'o dyn swift::operation::Operation<'o, M>>
         }
 
         struct #op<'o, M: swift::Model<'o>> {
@@ -255,30 +255,30 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         }
 
         #[swift::reexports::async_trait::async_trait]
-        impl<'o, M: swift::Model<'o>> swift::Operation<'o, M> for #op<'o, M>
+        impl<'o, M: swift::Model<'o>> swift::operation::Operation<'o, M> for #op<'o, M>
         where #plan_bound {
             async fn find_children(&self, time: swift::Time, plan: &M::Plan) {
                 let mut write = self.inner.write().await;
                 #(
-                    let new_child = <M::Plan as swift::HasResource<'o, #all_read_paths>>::find_child(plan, time);
+                    let new_child = <M::Plan as swift::timeline::HasResource<'o, #all_read_paths>>::find_child(plan, time);
                     if !std::ptr::eq(new_child, write.#all_read_variables) {
                         write.#all_read_variables.remove_parent(self).await;
                         write.#all_read_variables = new_child;
                     }
                 )*
             }
-            async fn add_parent(&self, parent: &'o dyn swift::Operation<'o, M>) {
+            async fn add_parent(&self, parent: &'o dyn swift::operation::Operation<'o, M>) {
                 let mut write = self.inner.write().await;
                 write.parents.push(parent);
             }
-            async fn remove_parent(&self, parent: &dyn swift::Operation<'o, M>) {
+            async fn remove_parent(&self, parent: &dyn swift::operation::Operation<'o, M>) {
                 let mut write = self.inner.write().await;
                 write.parents.retain(|p| !std::ptr::eq(*p, parent));
             }
         }
 
         #(
-            impl<'o, M: swift::Model<'o>> swift::Writer<'o, #all_write_paths, M> for #op<'o, M>
+            impl<'o, M: swift::Model<'o>> swift::operation::Writer<'o, #all_write_paths, M> for #op<'o, M>
             where #plan_bound, #history_bound {
                 fn read<'b>(&'o self, histories: &'o M::Histories, env: swift::exec::ExecEnvironment<'b>) -> swift::exec::BumpedFuture<'b, (u64, swift::reexports::tokio::sync::RwLockReadGuard<'o, <#all_write_paths as swift::Resource<'o>>::Read>)> where 'o: 'b {
                     unsafe { std::pin::Pin::new_unchecked(env.bump.alloc(async move {
@@ -372,7 +372,7 @@ fn insert_into_plan(idents: &Idents, when: TokenStream) -> TokenStream {
             let when = #when;
 
             let op_inner = #op_inner {
-                #(#all_read_variables: <M::Plan as swift::HasResource<#all_read_paths>>::find_child(plan, when),)*
+                #(#all_read_variables: <M::Plan as swift::timeline::HasResource<#all_read_paths>>::find_child(plan, when),)*
                 output: None,
                 parents: vec![]
             };
@@ -382,7 +382,7 @@ fn insert_into_plan(idents: &Idents, when: TokenStream) -> TokenStream {
                 this: &self
             });
 
-            #(<M::Plan as swift::HasResource<#all_write_paths>>::insert_operation(plan, when, op);)*
+            #(<M::Plan as swift::timeline::HasResource<#all_write_paths>>::insert_operation(plan, when, op);)*
         }
     }
 }

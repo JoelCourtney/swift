@@ -1,13 +1,21 @@
+#![doc(hidden)]
+
 use std::hash::{BuildHasher, Hasher};
 use std::ops::Deref;
 
-use crate::{HasHistory, Resource};
+use crate::Resource;
 use dashmap::DashMap;
 use elsa::sync::FrozenMap;
 use stable_deref_trait::StableDeref;
 
 pub type SwiftDefaultHashBuilder = foldhash::fast::FixedState;
 
+pub trait HasHistory<'h, R: Resource<'h>> {
+    fn insert(&'h self, hash: u64, value: R::Write) -> R::Read;
+    fn get(&'h self, hash: u64) -> Option<R::Read>;
+}
+
+#[derive(Debug)]
 pub struct CopyHistory<'h, R: Resource<'h>>(
     DashMap<u64, <R as Resource<'h>>::Write, PassThroughHashBuilder>,
 )
@@ -36,6 +44,7 @@ impl<'h, V: Copy + 'h, R: for<'b> Resource<'b, Read = V, Write = V> + 'h> HasHis
     }
 }
 
+#[derive(Debug)]
 pub struct DerefHistory<'h, R: Resource<'h>>(FrozenMap<u64, <R as Resource<'h>>::Write>)
 where
     <R as Resource<'h>>::Write: StableDeref;

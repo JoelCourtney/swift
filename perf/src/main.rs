@@ -1,4 +1,4 @@
-use swift::exec::{ExecEnvironment, SendBump, EXECUTOR};
+use swift::exec::SendBump;
 use swift::history::{CopyHistory, DerefHistory};
 use swift::{activity, model, Duration, Model, Plan, Resource, Time};
 
@@ -9,17 +9,19 @@ model! {
     }
 }
 
+#[derive(Debug)]
 pub enum A {}
 impl<'h> Resource<'h> for A {
-    const PIECEWISE_CONSTANT: bool = true;
+    const STATIC: bool = true;
     type Read = u32;
     type Write = u32;
     type History = CopyHistory<'h, A>;
 }
 
+#[derive(Debug)]
 pub enum B {}
 impl<'h> Resource<'h> for B {
-    const PIECEWISE_CONSTANT: bool = true;
+    const STATIC: bool = true;
     type Read = &'h str;
     type Write = String;
     type History = DerefHistory<'h, B>;
@@ -55,7 +57,7 @@ activity! {
 fn main() {
     let bump = SendBump::new();
     let histories = PerfHistories::default();
-    let plan_start = Time::zero_todo();
+    let plan_start = Time::now().unwrap();
     let mut plan = Perf::new_plan(
         plan_start,
         PerfInitialConditions {
@@ -65,33 +67,27 @@ fn main() {
         &bump,
     );
 
-    let offset = Duration::microseconds(1);
+    let offset = Duration::from_microseconds(1.0);
 
-    for i in 0..10000000 {
+    for i in 0..10_000_000 {
         plan.insert(
-            plan_start + offset + Duration::seconds(1) * 3 * i,
+            plan_start + offset + Duration::from_seconds(1.0) * 3 * i,
             IncrementA,
         );
         plan.insert(
-            plan_start + offset + Duration::seconds(1) * 3 * i + Duration::seconds(1),
+            plan_start + offset + Duration::from_seconds(1.0) * 3 * i + Duration::from_seconds(1.0),
             ConvertAToB,
         );
         plan.insert(
-            plan_start + offset + Duration::seconds(1) * 3 * i + Duration::seconds(2),
+            plan_start + offset + Duration::from_seconds(1.0) * 3 * i + Duration::from_seconds(2.0),
             ConvertBToA,
         );
     }
 
     println!("built");
 
-    let futures_bump = SendBump::new();
-    let future = plan
-        .a_operation_timeline
-        .last()
-        .1
-        .read(&histories, ExecEnvironment::new(&futures_bump));
+    let start = plan_start + Duration::from_seconds(30_000_000.0 - 10.0);
+    let result = plan.view::<B>(start..start + Duration::from_seconds(10.0), &histories);
 
-    let result = futures_lite::future::block_on(EXECUTOR.run(future));
-
-    println!("{}", result.1);
+    dbg!(result);
 }
