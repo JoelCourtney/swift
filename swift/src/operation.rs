@@ -1,6 +1,6 @@
 #![doc(hidden)]
 
-use crate::exec::{BumpedFuture, ExecEnvironment, SendBump};
+use crate::exec::{BumpedFuture, ExecEnvironment, SyncBump};
 use crate::history::{HasHistory, SwiftDefaultHashBuilder};
 use crate::timeline::HasResource;
 use crate::{Activity, ActivityId, Model, Plan, Resource, Time};
@@ -131,7 +131,7 @@ impl<'o> Model<'o> for AllModel {
     fn new_plan(
         _time: Time,
         _initial_conditions: Self::InitialConditions,
-        _bump: &'o SendBump,
+        _bump: &'o SyncBump,
     ) -> AllPlan {
         unimplemented!()
     }

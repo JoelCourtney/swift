@@ -35,7 +35,7 @@ impl ToTokens for Model {
                 type InitialConditions = #initial_conditions_name<'o>;
                 type Histories = #histories_name<'o>;
 
-                fn new_plan(time: swift::Time, initial_conditions: Self::InitialConditions, bump: &'o swift::exec::SendBump) -> Self::Plan {
+                fn new_plan(time: swift::Time, initial_conditions: Self::InitialConditions, bump: &'o swift::exec::SyncBump) -> Self::Plan {
                     #plan_name {
                         activities: std::collections::HashMap::new(),
                         bump,
@@ -54,7 +54,7 @@ impl ToTokens for Model {
 
             #visibility struct #plan_name<'o> {
                 activities: std::collections::HashMap<swift::ActivityId, (swift::Time, &'o dyn swift::Activity<'o, #name>)>,
-                bump: &'o swift::exec::SendBump,
+                bump: &'o swift::exec::SyncBump,
                 #(#timeline_names: swift::timeline::Timeline<'o, #resource_paths, #name>,)*
                 id_counter: u32
             }

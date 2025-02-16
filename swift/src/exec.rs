@@ -13,12 +13,12 @@ pub const STACK_LIMIT: u16 = 1000;
 
 #[derive(Copy, Clone)]
 pub struct ExecEnvironment<'b> {
-    pub bump: &'b SendBump,
+    pub bump: &'b SyncBump,
     pub should_spawn: ShouldSpawn,
 }
 
 impl<'b> ExecEnvironment<'b> {
-    pub fn new(b: &'b SendBump) -> Self {
+    pub fn new(b: &'b SyncBump) -> Self {
         ExecEnvironment {
             bump: b,
             should_spawn: No(0),
@@ -36,10 +36,10 @@ impl<'b> ExecEnvironment<'b> {
 pub type BumpedFuture<'b, T> = Pin<&'b mut (dyn Future<Output = T> + Send + 'b)>;
 
 #[derive(Deref, Default)]
-pub struct SendBump(Bump);
-unsafe impl Sync for SendBump {}
+pub struct SyncBump(Bump);
+unsafe impl Sync for SyncBump {}
 
-impl SendBump {
+impl SyncBump {
     pub fn new() -> Self {
         Self(Bump::new())
     }

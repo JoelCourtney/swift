@@ -290,7 +290,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
                                 let result = if env.should_spawn == swift::exec::ShouldSpawn::Yes {
                                     let op_internal = &write;
                                     swift::exec::EXECUTOR.spawn_scoped(async move {
-                                        let new_bump = swift::exec::SendBump::new();
+                                        let new_bump = swift::exec::SyncBump::new();
                                         let env = swift::exec::ExecEnvironment::new(&new_bump);
                                         #run_internal
                                     }).await

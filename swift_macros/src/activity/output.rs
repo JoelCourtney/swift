@@ -19,7 +19,7 @@ impl ToTokens for Activity {
         let result = quote! {
             impl<'o, M: swift::Model<'o> + 'o> swift::Activity<'o, M> for #name
             where M::Plan: 'o + #(swift::timeline::HasResource<'o, #resources_used>)+*, M::Histories: #(swift::history::HasHistory<'o, #resources_used>)+* {
-                fn decompose(&'o self, start: swift::Time, plan: &mut M::Plan, bump: &'o swift::exec::SendBump) {
+                fn decompose(&'o self, start: swift::Time, plan: &mut M::Plan, bump: &'o swift::exec::SyncBump) {
                     #(#lines)*
                 }
             }

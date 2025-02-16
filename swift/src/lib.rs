@@ -2,7 +2,7 @@
 //!
 //! A discrete event simulation engine with optimal incremental simulation, parallelism, and caching.
 
-use crate::exec::{ExecEnvironment, SendBump, EXECUTOR, NUM_THREADS};
+use crate::exec::{ExecEnvironment, SyncBump, EXECUTOR, NUM_THREADS};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -92,7 +92,7 @@ where
     where
         Self: HasResource<'o, R>,
     {
-        let bump = SendBump::new();
+        let bump = SyncBump::new();
         let nodes = self.get_operations(bounds).into_iter();
         let env = ExecEnvironment::new(&bump);
         std::thread::scope(move |scope| {
@@ -133,14 +133,14 @@ pub trait Model<'o>: Sync {
     fn new_plan(
         time: Time,
         initial_conditions: Self::InitialConditions,
-        bump: &'o SendBump,
+        bump: &'o SyncBump,
     ) -> Self::Plan;
 }
 
 /// An activity, which decomposes into a statically-known set of operations. Implemented
 /// with the [activity] macro.
 pub trait Activity<'o, M: Model<'o>>: Send + Sync {
-    fn decompose(&'o self, start: Time, plan: &mut M::Plan, bump: &'o SendBump);
+    fn decompose(&'o self, start: Time, plan: &mut M::Plan, bump: &'o SyncBump);
 }
 
 /// A unique activity ID.

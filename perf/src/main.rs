@@ -1,4 +1,4 @@
-use swift::exec::SendBump;
+use swift::exec::SyncBump;
 use swift::history::{CopyHistory, DerefHistory};
 use swift::{activity, model, Duration, Model, Plan, Resource, Time};
 
@@ -55,7 +55,7 @@ activity! {
 }
 
 fn main() {
-    let bump = SendBump::new();
+    let bump = SyncBump::new();
     let histories = PerfHistories::default();
     let plan_start = Time::now().unwrap();
     let mut plan = Perf::new_plan(
