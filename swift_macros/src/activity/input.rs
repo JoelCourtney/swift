@@ -4,7 +4,7 @@ use crate::activity::{Activity, Op, StmtOrOp};
 use proc_macro2::Ident;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
-use syn::{braced, parenthesized, Block, Error, Expr, Path, Token};
+use syn::{braced, parenthesized, Block, Error, Expr, Path, Result, Stmt, Token};
 
 impl Parse for Activity {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -17,7 +17,7 @@ impl Parse for Activity {
 
         let mut lines: Vec<StmtOrOp> = vec![];
         while !body.is_empty() {
-            lines.push(body.parse()?);
+            lines.push(body.parse().unwrap());
         }
 
         Ok(Activity { name, lines })
@@ -25,11 +25,18 @@ impl Parse for Activity {
 }
 
 impl Parse for StmtOrOp {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
+    fn parse(input: ParseStream) -> Result<Self> {
         if input.peek(Token![@]) {
             Ok(StmtOrOp::Op(input.parse()?))
         } else {
-            Ok(StmtOrOp::Stmt(input.parse()?))
+            let forked = input.fork();
+            let stmt: Result<Stmt> = forked.parse();
+            if stmt.is_ok() {
+                Ok(StmtOrOp::Stmt(input.parse()?))
+            } else {
+                let expr: Expr = input.parse()?;
+                Ok(StmtOrOp::Stmt(Stmt::Expr(expr, None)))
+            }
         }
     }
 }
@@ -38,7 +45,7 @@ fn check_paths<'a>(
     iter: impl Iterator<Item = (&'a Ident, &'a Path)>,
     variable: &Ident,
     path: &Path,
-) -> syn::Result<()> {
+) -> Result<()> {
     #[allow(clippy::manual_try_fold)]
     iter.filter(|(v, p)| *p == path && *v != variable)
         .fold(Ok(()), |acc, _| {

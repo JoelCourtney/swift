@@ -59,7 +59,7 @@ impl ToTokens for Model {
                 id_counter: u32
             }
 
-            #[derive(Default, Debug)]
+            #[derive(Default)]
             #visibility struct #histories_name<'h> {
                 #(#history_names: <#resource_paths as swift::Resource<'h>>::History,)*
             }

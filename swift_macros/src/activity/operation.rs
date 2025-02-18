@@ -221,6 +221,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
             #(let #all_but_one_write_variables = <M::Histories as swift::history::HasHistory<#all_but_one_write_paths>>::get(histories, hash).unwrap();)*
             (#(#all_write_variables),*)
         } else {
+            let args = self.activity;
             { #body }
             #(let #all_write_variables = <M::Histories as swift::history::HasHistory<#all_write_paths>>::insert(histories, hash, #all_write_variables);)*
             (#(#all_write_variables),*)
@@ -251,7 +252,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
         struct #op<'o, M: swift::Model<'o>> {
             inner: swift::reexports::tokio::sync::RwLock<#op_inner<'o, M>>,
-            this: &'o #activity,
+            activity: &'o #activity,
         }
 
         #[swift::reexports::async_trait::async_trait]
@@ -379,7 +380,7 @@ fn insert_into_plan(idents: &Idents, when: TokenStream) -> TokenStream {
 
             let op = bump.alloc(#op {
                 inner: swift::reexports::tokio::sync::RwLock::new(op_inner),
-                this: &self
+                activity: &self
             });
 
             #(<M::Plan as swift::timeline::HasResource<#all_write_paths>>::insert_operation(plan, when, op);)*

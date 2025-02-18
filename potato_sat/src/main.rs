@@ -1,5 +1,5 @@
-use swift::history::{CopyHistory, DerefHistory};
 use swift::{model, Resource};
+use swift::{CopyHistory, DerefHistory};
 
 mod activities;
 

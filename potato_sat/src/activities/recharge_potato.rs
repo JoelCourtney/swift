@@ -15,6 +15,6 @@ activity! {
             b += 4.0;
             m = "help".to_string();
         }
-        println!("asdf");
+        Duration::ZERO
     }
 }

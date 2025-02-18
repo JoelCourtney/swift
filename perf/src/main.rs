@@ -1,6 +1,6 @@
 use swift::exec::SyncBump;
-use swift::history::{CopyHistory, DerefHistory};
 use swift::{activity, model, Duration, Model, Plan, Resource, Time};
+use swift::{CopyHistory, DerefHistory};
 
 model! {
     pub Perf {
@@ -33,6 +33,7 @@ activity! {
         @(start) a: A -> a {
             a += 1;
         }
+        Duration::ZERO
     }
 }
 
@@ -42,6 +43,7 @@ activity! {
         @(start) a: A -> b: B {
             b = a.to_string()
         }
+        Duration::ZERO
     }
 }
 
@@ -51,6 +53,7 @@ activity! {
         @(start) b: B -> a: A {
             a = b.parse().unwrap();
         }
+        Duration::ZERO
     }
 }
 
