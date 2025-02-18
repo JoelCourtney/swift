@@ -23,7 +23,7 @@ impl ToTokens for Model {
             .map(|r| format_ident!("{}_history", r.field))
             .collect::<Vec<_>>();
 
-        let plan_name = format_ident!("{name}Plan");
+        let timelines_name = format_ident!("{name}Timelines");
         let initial_conditions_name = format_ident!("{name}InitialConditions");
         let histories_name = format_ident!("{name}Histories");
 
@@ -31,32 +31,28 @@ impl ToTokens for Model {
             #visibility struct #name;
 
             impl<'o> swift::Model<'o> for #name {
-                type Plan = #plan_name<'o>;
+                type Timelines = #timelines_name<'o>;
                 type InitialConditions = #initial_conditions_name<'o>;
                 type Histories = #histories_name<'o>;
-
-                fn new_plan(time: swift::Time, initial_conditions: Self::InitialConditions, bump: &'o swift::exec::SyncBump) -> Self::Plan {
-                    #plan_name {
-                        activities: std::collections::HashMap::new(),
-                        bump,
-                        #(#timeline_names: swift::timeline::Timeline::<#resource_paths, #name>::init(
-                            time,
-                            bump.alloc(swift::operation::InitialConditionOp::new(initial_conditions.#resource_names))
-                        ),)*
-                        id_counter: 0
-                    }
-                }
             }
 
             #visibility struct #initial_conditions_name<'h> {
                 #(#resource_names: <#resource_paths as swift::Resource<'h>>::Write,)*
             }
 
-            #visibility struct #plan_name<'o> {
-                activities: std::collections::HashMap<swift::ActivityId, (swift::Time, &'o dyn swift::Activity<'o, #name>)>,
-                bump: &'o swift::exec::SyncBump,
+            #visibility struct #timelines_name<'o> {
                 #(#timeline_names: swift::timeline::Timeline<'o, #resource_paths, #name>,)*
-                id_counter: u32
+            }
+
+            impl<'o> From<(swift::Time, &'o swift::exec::SyncBump, #initial_conditions_name<'o>)> for #timelines_name<'o> {
+                fn from((time, bump, inish_condish): (swift::Time, &'o swift::exec::SyncBump, #initial_conditions_name)) -> Self {
+                    Self {
+                        #(#timeline_names: swift::timeline::Timeline::<#resource_paths, #name>::init(
+                            time,
+                            bump.alloc(swift::operation::InitialConditionOp::new(inish_condish.#resource_names))
+                        ),)*
+                    }
+                }
             }
 
             #[derive(Default)]
@@ -75,29 +71,9 @@ impl ToTokens for Model {
                 }
             )*
 
-            impl<'o> swift::Plan<'o> for #plan_name<'o> {
-
-                type Model = #name;
-
-                fn insert(&mut self, time: swift::Time, activity: impl swift::Activity<'o, #name> + 'o) -> swift::ActivityId {
-                    let id = swift::ActivityId::new(self.id_counter);
-                    self.id_counter += 1;
-                    let activity = self.bump.alloc(activity);
-                    self.activities.insert(id, (time, activity));
-                    let activity = &self.activities.get(&id).unwrap().1;
-
-                    activity.decompose(time, self, &self.bump);
-
-                    id
-                }
-                fn remove(&self, _id: swift::ActivityId) {
-                    todo!()
-                }
-            }
-
             #(
-                impl<'o> swift::timeline::HasResource<'o, #resource_paths> for #plan_name<'o> {
-                    fn find_child(&self, time: swift::Time) -> &'o (dyn swift::operation::Writer<'o, #resource_paths, Self::Model>) {
+                impl<'o> swift::timeline::HasTimeline<'o, #resource_paths, #name> for #timelines_name<'o> {
+                    fn find_child(&self, time: swift::Time) -> &'o (dyn swift::operation::Writer<'o, #resource_paths, #name>) {
                         let (last_time, last_op) = self.#timeline_names.last();
                         if last_time < time {
                             last_op
@@ -105,11 +81,11 @@ impl ToTokens for Model {
                             self.#timeline_names.last_before(time).1
                         }
                     }
-                    fn insert_operation(&mut self, time: swift::Time, op: &'o dyn swift::operation::Writer<'o, #resource_paths, Self::Model>) {
+                    fn insert_operation(&mut self, time: swift::Time, op: &'o dyn swift::operation::Writer<'o, #resource_paths, #name>) {
                         self.#timeline_names.insert(time, op);
                     }
 
-                    fn get_operations(&self, bounds: impl std::ops::RangeBounds<swift::Time>) -> Vec<(swift::Time, &'o dyn swift::operation::Writer<'o, #resource_paths, Self::Model>)> {
+                    fn get_operations(&self, bounds: impl std::ops::RangeBounds<swift::Time>) -> Vec<(swift::Time, &'o dyn swift::operation::Writer<'o, #resource_paths, #name>)> {
                         self.#timeline_names.range(bounds).map(|(t,n)| (t, n)).collect()
                     }
                 }

@@ -210,7 +210,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
             use std::hash::{Hasher, BuildHasher, Hash};
 
             let mut state = swift::history::SwiftDefaultHashBuilder::default().build_hasher();
-            std::any::TypeId::of::<#op_inner<swift::operation::AllModel>>().hash(&mut state);
+            std::any::TypeId::of::<#op_inner<swift::operation::EmptyModel>>().hash(&mut state);
 
             #(#all_read_resource_hashes.hash(&mut state);)*
 
@@ -235,8 +235,8 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         })
     };
 
-    let plan_bound = quote! {
-        M::Plan: #(swift::timeline::HasResource<'o, #all_paths>)+*
+    let timelines_bound = quote! {
+        M::Timelines: #(swift::timeline::HasTimeline<'o, #all_paths, M>)+*
     };
 
     let history_bound = quote! {
@@ -257,11 +257,11 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
         #[swift::reexports::async_trait::async_trait]
         impl<'o, M: swift::Model<'o>> swift::operation::Operation<'o, M> for #op<'o, M>
-        where #plan_bound {
-            async fn find_children(&self, time: swift::Time, plan: &M::Plan) {
+        where #timelines_bound {
+            async fn find_children(&self, time: swift::Time, timelines: &M::Timelines) {
                 let mut write = self.inner.write().await;
                 #(
-                    let new_child = <M::Plan as swift::timeline::HasResource<'o, #all_read_paths>>::find_child(plan, time);
+                    let new_child = <M::Timelines as swift::timeline::HasTimeline<'o, #all_read_paths, M>>::find_child(timelines, time);
                     if !std::ptr::eq(new_child, write.#all_read_variables) {
                         write.#all_read_variables.remove_parent(self).await;
                         write.#all_read_variables = new_child;
@@ -280,7 +280,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
         #(
             impl<'o, M: swift::Model<'o>> swift::operation::Writer<'o, #all_write_paths, M> for #op<'o, M>
-            where #plan_bound, #history_bound {
+            where #timelines_bound, #history_bound {
                 fn read<'b>(&'o self, histories: &'o M::Histories, env: swift::exec::ExecEnvironment<'b>) -> swift::exec::BumpedFuture<'b, (u64, swift::reexports::tokio::sync::RwLockReadGuard<'o, <#all_write_paths as swift::Resource<'o>>::Read>)> where 'o: 'b {
                     unsafe { std::pin::Pin::new_unchecked(env.bump.alloc(async move {
                         // If you (the thread) can get the write lock on the node, then you are responsible
@@ -373,7 +373,7 @@ fn insert_into_plan(idents: &Idents, when: TokenStream) -> TokenStream {
             let when = #when;
 
             let op_inner = #op_inner {
-                #(#all_read_variables: <M::Plan as swift::timeline::HasResource<#all_read_paths>>::find_child(plan, when),)*
+                #(#all_read_variables: <M::Timelines as swift::timeline::HasTimeline<#all_read_paths, M>>::find_child(timelines, when),)*
                 output: None,
                 parents: vec![]
             };
@@ -383,7 +383,7 @@ fn insert_into_plan(idents: &Idents, when: TokenStream) -> TokenStream {
                 activity: &self
             });
 
-            #(<M::Plan as swift::timeline::HasResource<#all_write_paths>>::insert_operation(plan, when, op);)*
+            #(<M::Timelines as swift::timeline::HasTimeline<#all_write_paths, M>>::insert_operation(timelines, when, op);)*
         }
     }
 }

@@ -1,5 +1,5 @@
 use swift::exec::SyncBump;
-use swift::{activity, model, Duration, Model, Plan, Resource, Time};
+use swift::{activity, model, Duration, Plan, Resource, Time};
 use swift::{CopyHistory, DerefHistory};
 
 model! {
@@ -61,13 +61,13 @@ fn main() {
     let bump = SyncBump::new();
     let histories = PerfHistories::default();
     let plan_start = Time::now().unwrap();
-    let mut plan = Perf::new_plan(
+    let mut plan = Plan::<Perf>::new(
+        &bump,
         plan_start,
         PerfInitialConditions {
             a: 0,
             b: "".to_string(),
         },
-        &bump,
     );
 
     let offset = Duration::from_microseconds(1.0);
@@ -89,7 +89,7 @@ fn main() {
 
     println!("built");
 
-    let start = plan_start + Duration::from_seconds(30_000_000.0 - 10.0);
+    let start = plan_start + Duration::from_seconds(3_000_000.0 - 10.0);
     let result = plan.view::<B>(start..start + Duration::from_seconds(10.0), &histories);
 
     dbg!(result);

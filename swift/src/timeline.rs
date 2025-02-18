@@ -1,28 +1,28 @@
 #![doc(hidden)]
 
 use crate::operation::Writer;
-use crate::{Model, Plan, Resource};
+use crate::{Model, Resource};
 use hifitime::Epoch as Time;
 use std::collections::BTreeMap;
 use std::ops::RangeBounds;
 
-pub trait HasResource<'o, R: Resource<'o>>: Plan<'o> {
-    fn find_child(&self, time: Time) -> &'o dyn Writer<'o, R, Self::Model>;
-    fn insert_operation(&mut self, time: Time, op: &'o dyn Writer<'o, R, Self::Model>);
+pub trait HasTimeline<'o, R: Resource<'o>, M: Model<'o>> {
+    fn find_child(&self, time: Time) -> &'o dyn Writer<'o, R, M>;
+    fn insert_operation(&mut self, time: Time, op: &'o dyn Writer<'o, R, M>);
 
     fn get_operations(
         &self,
         bounds: impl RangeBounds<Time>,
-    ) -> Vec<(Time, &'o dyn Writer<'o, R, Self::Model>)>;
+    ) -> Vec<(Time, &'o dyn Writer<'o, R, M>)>;
 }
 
 pub struct Timeline<'o, R: Resource<'o>, M: Model<'o>>(BTreeMap<Time, &'o (dyn Writer<'o, R, M>)>)
 where
-    M::Plan: HasResource<'o, R>;
+    M::Timelines: HasTimeline<'o, R, M>;
 
 impl<'o, R: Resource<'o>, M: Model<'o>> Timeline<'o, R, M>
 where
-    M::Plan: HasResource<'o, R>,
+    M::Timelines: HasTimeline<'o, R, M>,
 {
     pub fn init(time: Time, initial_condition: &'o (dyn Writer<'o, R, M>)) -> Timeline<'o, R, M> {
         Timeline(BTreeMap::from([(time, initial_condition)]))

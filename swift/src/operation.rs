@@ -2,17 +2,16 @@
 
 use crate::exec::{BumpedFuture, ExecEnvironment, SyncBump};
 use crate::history::{HasHistory, SwiftDefaultHashBuilder};
-use crate::timeline::HasResource;
-use crate::{Activity, ActivityId, Model, Plan, Resource, Time};
+use crate::timeline::HasTimeline;
+use crate::{Model, Resource, Time};
 use async_trait::async_trait;
 use std::hash::BuildHasher;
-use std::ops::RangeBounds;
 use std::pin::Pin;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
 #[async_trait]
 pub trait Operation<'o, M: Model<'o>>: Sync {
-    async fn find_children(&self, time: Time, plan: &M::Plan);
+    async fn find_children(&self, time: Time, timelines: &M::Timelines);
     async fn add_parent(&self, parent: &'o dyn Operation<'o, M>);
     async fn remove_parent(&self, parent: &dyn Operation<'o, M>);
 }
@@ -29,7 +28,7 @@ pub trait Writer<'o, R: Resource<'o>, M: Model<'o>>: Operation<'o, M> {
 
 pub struct InitialConditionOpInner<'o, R: Resource<'o>, M: Model<'o>>
 where
-    M::Plan: HasResource<'o, R>,
+    M::Timelines: HasTimeline<'o, R, M>,
 {
     value: <R as Resource<'o>>::Write,
     result: Option<(u64, <R as Resource<'o>>::Read)>,
@@ -38,14 +37,14 @@ where
 
 pub struct InitialConditionOp<'o, R: Resource<'o>, M: Model<'o>>
 where
-    M::Plan: HasResource<'o, R>,
+    M::Timelines: HasTimeline<'o, R, M>,
 {
     lock: RwLock<InitialConditionOpInner<'o, R, M>>,
 }
 
 impl<'o, R: Resource<'o>, M: Model<'o>> InitialConditionOp<'o, R, M>
 where
-    M::Plan: HasResource<'o, R>,
+    M::Timelines: HasTimeline<'o, R, M>,
 {
     pub fn new(value: <R as Resource<'o>>::Write) -> Self {
         Self {
@@ -61,9 +60,9 @@ where
 #[async_trait]
 impl<'o, R: Resource<'o>, M: Model<'o>> Operation<'o, M> for InitialConditionOp<'o, R, M>
 where
-    M::Plan: HasResource<'o, R>,
+    M::Timelines: HasTimeline<'o, R, M>,
 {
-    async fn find_children(&self, _time: Time, _plan: &M::Plan) {}
+    async fn find_children(&self, _time: Time, _timelines: &M::Timelines) {}
 
     async fn add_parent(&self, parent: &'o dyn Operation<'o, M>) {
         let mut write = self.lock.write().await;
@@ -79,7 +78,7 @@ where
 impl<'o, R: Resource<'o> + 'o, M: Model<'o>> Writer<'o, R, M> for InitialConditionOp<'o, R, M>
 where
     M::Histories: HasHistory<'o, R>,
-    M::Plan: HasResource<'o, R>,
+    M::Timelines: HasTimeline<'o, R, M>,
 {
     fn read<'b>(
         &'o self,
@@ -121,53 +120,18 @@ where
     }
 }
 
-pub enum AllModel {}
+pub enum EmptyModel {}
 
-impl<'o> Model<'o> for AllModel {
-    type Plan = AllPlan;
+impl Model<'_> for EmptyModel {
     type InitialConditions = ();
     type Histories = ();
-
-    fn new_plan(
-        _time: Time,
-        _initial_conditions: Self::InitialConditions,
-        _bump: &'o SyncBump,
-    ) -> AllPlan {
-        unimplemented!()
-    }
+    type Timelines = EmptyTimelines;
 }
 
-pub enum AllPlan {}
+pub enum EmptyTimelines {}
 
-impl<'o> Plan<'o> for AllPlan {
-    type Model = AllModel;
-
-    fn insert(
-        &mut self,
-        _time: Time,
-        _activity: impl Activity<'o, Self::Model> + 'o,
-    ) -> ActivityId {
-        unimplemented!()
-    }
-
-    fn remove(&self, _id: ActivityId) {
-        unimplemented!()
-    }
-}
-
-impl<R: Resource<'static>> HasResource<'static, R> for AllPlan {
-    fn find_child(&self, _time: Time) -> &'static dyn Writer<'static, R, Self::Model> {
-        unimplemented!()
-    }
-
-    fn insert_operation(&mut self, _time: Time, _op: &'static dyn Writer<'static, R, Self::Model>) {
-        unimplemented!()
-    }
-
-    fn get_operations(
-        &self,
-        _bounds: impl RangeBounds<Time>,
-    ) -> Vec<(Time, &'static dyn Writer<'static, R, Self::Model>)> {
+impl<'o> From<(Time, &'o SyncBump, ())> for EmptyTimelines {
+    fn from(_value: (Time, &'o SyncBump, ())) -> Self {
         todo!()
     }
 }
