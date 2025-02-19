@@ -56,16 +56,17 @@
 //! For an extremely simplified example, consider a plan working on two mostly-independent subsystems,
 //! `A` and `B`. We start with an unsimulated base plan, then branch into two copies for the `A` and
 //! `B` teams to work on. Say team `A` simulates their portion of the base plan first. `B`'s work is
-//! only *mostly* independent, with some coupling between common resources. Most of the time, `B` doesn't
+//! only *mostly* independent, with some coupling through common resources. Most of the time, `B` doesn't
 //! need `A`'s resources, but if they do, `A` has already simulated the base plan and those results can
-//! be reused even though they are from a different plan. Then, when the branches are merged, a majority
+//! be reused even though they are on a different branch. Then, when the branches are merged, a majority
 //! of the final plan has already been simulated. Only the areas that coupled `A` and `B` together need
 //! to be resimulated.
 //!
 //! This approach's main drawback is memory usage. By indiscriminately storing all sim results without
 //! knowing if they will ever be reused, it can build up gigabytes of store after simulating on the
 //! order of tens of millions of operations. Since the keys in the storage are meaningless hashes,
-//! there is currently no good way to prune the history to reduce memory usage.
+//! there is currently no good way to prune the history to reduce memory usage. This poses some technical
+//! problems for long-running venues, though I don't believe they are insurmountable.
 //!
 //! ### Models
 //!
@@ -188,6 +189,23 @@
 //!
 //! ## Interaction
 //!
+//! TODO
+//!
+//! ## Timekeeping
+//!
+//! Peregrine uses [hifitime](https://docs.rs/hifitime/latest/hifitime/) for timekeeping. The [Epoch][Time]
+//! type, renamed in Peregrine to [Time] for simplicity, is used to order operations and activities.
+//! The [Duration] type represents difference between [Time]s. As for why I chose hifitime, this line
+//! from their documentation should explain it:
+//!
+//! > This library is validated against NASA/NAIF SPICE for the Ephemeris Time to Universal
+//! > Coordinated Time computations: there are exactly zero nanoseconds of difference between
+//! > SPICE and hifitime for the computation of ET and UTC after 01 January 1972.
+//!
+//! There is a significant performance penalty with this library when constructing large plans, due to
+//! its non-trivial comparison and ordering. I believe its worth it for compatibility with SPICE,
+//! and the penalty isn't present during simulation anyway.
+//!
 //! ## Possible Features
 //!
 //! This project is currently a proof-of-concept, but I've set it up with future development in mind.
@@ -196,7 +214,7 @@
 //!   bring to the model
 //! - **Daemon tasks;** background tasks associated with the model that can either generate a statically-known
 //!   set of recurring operations, or create "responsive" operations that are placed immediately after
-//!   another operation writes to a given resource.
+//!   any other operation writes to a given resource.
 //! - **Maybe-reads and maybe-writes;** optimizations for operations that may or may not read or write a
 //!   resource.
 //! - **Global persistent history;** I made a lot of grand claims about sharing history between plans and
@@ -217,6 +235,21 @@
 //!   relationship is known ahead-of-time.
 //! - **Activity spawning;** the activity body could automatically spawn child activities when inserted
 //!   into the plan, as long as this spawning is only a function of the activity arguments.
+//! - **Probabilistic Caching;** if the overhead of reading/writing history is a problem, I could
+//!   potentially do pseudo-random caching (such as "only cache if `hash % 10 == 0`") without a large penalty
+//!   to cache misses.
+//!
+//! ## Impossible Features
+//!
+//! Peregrine has to impose some restrictions on your activities and operations, so some things are
+//! impossible:
+//! - **Operation placement at runtime;** the exact placement of all activities and operations must
+//!   be determined by only statically-known values like activity arguments and start time.
+//! - **Hidden state;** all state in the simulation must be recorded by the history. Getting around
+//!   this restriction is UB.
+//! - **Non-reentrant or non-deterministic activities;** the engine assumes that for the same input,
+//!   all operations will produce the same output, and if a cached value exists in history then it is valid.
+//!   It also assumes that it is OK to only resimulate a portion of an activity's operations.
 
 use crate::exec::{ExecEnvironment, SyncBump, EXECUTOR, NUM_THREADS};
 pub use history::{CopyHistory, DerefHistory};
