@@ -1,19 +1,19 @@
-//! # Swift Engine
+//! # Peregrine Engine
 //!
 //! A discrete event spacecraft simulation engine designed for schedulers.
 //!
-//! Swift always does the minimal amount of computation to respond to changes in the plan, and to
+//! Peregrine always does the minimal amount of computation to respond to changes in the plan, and to
 //! calculate only the requested resources *at the requested times*. If you only care about a couple
 //! resources in the vicinity of a small plan change, then that's all the engine simulates.
 //!
-//! Swift also stores a permanent history of resource states, meaning that simulation is not just
+//! Peregrine also stores a permanent history of resource states, meaning that simulation is not just
 //! incremental with respect to the most recent plan state; it is incremental with respect to all recorded
 //! history. If you undo five recent simulated changes and add one new activity, the engine will only
 //! simulate change of adding the activity, not of adding one and deleting five.
 //!
-//! Swift performs all simulation with as much parallelism as is mathematically allowed by the
+//! Peregrine performs all simulation with as much parallelism as is mathematically allowed by the
 //! configuration of the plan. Even on linear plan structures with no available concurrency, initial (extremely informal) benchmarking
-//! suggests that Swift's engine overhead is significantly lower than Aerie-Merlin's - simulating
+//! suggests that Peregrine's engine overhead is significantly lower than Aerie-Merlin's - simulating
 //! millions of simple operations per second instead of thousands. Highly expensive operations may
 //! amortize the overhead differences, but will not amortize the parallelism.
 //!
@@ -26,7 +26,7 @@
 //!
 //! Resources are just variables whose evolution over time is tracked and recorded. Activities
 //! contain operations that mutate those resources, and place those operations at specific
-//! pre-determined times throughout a plan. This is the only fundamental difference between Swift and
+//! pre-determined times throughout a plan. This is the only fundamental difference between Peregrine and
 //! Merlin; activities declare their operations - when they happen, what resources they read/write -
 //! and their total duration ahead of time, before simulation.
 //!
@@ -42,7 +42,7 @@
 //!
 //! ### History & Incremental Simulation
 //!
-//! Swift records the history of all operations that have been simulated. Currently, this is only
+//! Peregrine records the history of all operations that have been simulated. Currently, this is only
 //! recorded per-session, but a persistent system could be implemented in the future. This enables
 //! the engine to immediately stop as soon as it encounters a state that it has been in before. Importantly,
 //! it recognizes the state using only the structure of the DAG and the initial conditions, not the
@@ -51,7 +51,7 @@
 //! and only the initial condition operations hash the input. This allows the engine to recognize past
 //! states without performing any simulation.
 //!
-//! Importantly, Swift stores history independent of the plan, meaning that it can be shared between
+//! Importantly, Peregrine stores history independent of the plan, meaning that it can be shared between
 //! branched versions of the same plan, even as they are updated and simulated live, in parallel.
 //! For an extremely simplified example, consider a plan working on two mostly-independent subsystems,
 //! `A` and `B`. We start with an unsimulated base plan, then branch into two copies for the `A` and
@@ -71,7 +71,7 @@
 //!
 //! For those familiar with Aerie-Merlin, you might notice that I didn't use the word "Model"
 //! in the above descriptions. This is because while in Merlin, the model is a container that creates,
-//! specifies, and owns its resources and activities, in Swift the model is just a selection of
+//! specifies, and owns its resources and activities, in Peregrine the model is just a selection of
 //! pre-existing resources. Activities are applicable to any model that selects the resources it
 //! operates on. This reinterpretation gives a couple advantages:
 //! - Easier modularity for levels-of-fidelity. If two models are nearly the same, except one uses
@@ -99,8 +99,8 @@
 //!
 //! ```
 //! # fn main() {}
-//! # use swift::Resource;
-//! # use swift::CopyHistory;
+//! # use peregrine::Resource;
+//! # use peregrine::CopyHistory;
 //! enum SolCounter {}
 //!
 //! impl<'h> Resource<'h> for SolCounter {
@@ -118,7 +118,7 @@
 //! ```
 //! # fn main() {}
 //! # use serde::{Serialize, Deserialize};
-//! # use swift::{impl_activity, Resource, CopyHistory, DerefHistory, Duration};
+//! # use peregrine::{impl_activity, Resource, CopyHistory, DerefHistory, Duration};
 //! # enum SolCounter {}
 //! # impl<'h> Resource<'h> for SolCounter {
 //! #     const STATIC: bool = true;
@@ -160,7 +160,7 @@
 //! ```
 //! # fn main() {}
 //! # use serde::{Serialize, Deserialize};
-//! # use swift::{impl_activity, Resource, CopyHistory, DerefHistory, Duration, model};
+//! # use peregrine::{impl_activity, Resource, CopyHistory, DerefHistory, Duration, model};
 //! # enum SolCounter {}
 //! # impl<'h> Resource<'h> for SolCounter {
 //! #     const STATIC: bool = true;
@@ -232,7 +232,7 @@ use std::ops::RangeBounds;
 ///
 /// ```
 /// # fn main() {}
-/// # use swift::{model, Resource, CopyHistory};
+/// # use peregrine::{model, Resource, CopyHistory};
 /// # enum ResourceA {}
 /// # impl<'h> Resource<'h> for ResourceA {
 /// #     const STATIC: bool = true;
@@ -260,7 +260,7 @@ use std::ops::RangeBounds;
 /// are used to create a new plan, and has one field for each resource where you can populate
 /// the resource's `Write` value. The histories are used to cache simulation results to be reused
 /// in later simulations.
-pub use swift_macros::model;
+pub use peregrine_macros::model;
 
 /// Implements the [Activity] trait for a type.
 ///
@@ -273,7 +273,7 @@ pub use swift_macros::model;
 ///
 /// ```
 /// # fn main() {}
-/// # use swift::{impl_activity, Resource, CopyHistory, DerefHistory, Duration};
+/// # use peregrine::{impl_activity, Resource, CopyHistory, DerefHistory, Duration};
 /// use serde::{Serialize, Deserialize};
 ///
 /// enum SolCounter {}
@@ -319,7 +319,7 @@ pub use swift_macros::model;
 ///
 /// It is *technically* valid to generate operations before the start time or after the declared end time.
 /// It would just be very un-hygienic and potentially hard to debug.
-pub use swift_macros::impl_activity;
+pub use peregrine_macros::impl_activity;
 
 pub mod exec;
 pub mod history;
@@ -370,8 +370,8 @@ use timeline::HasTimeline;
 ///
 /// ```
 /// # fn main() {}
-/// # use swift::Resource;
-/// # use swift::CopyHistory;
+/// # use peregrine::Resource;
+/// # use peregrine::CopyHistory;
 /// enum SolCounter {}
 ///
 /// impl<'h> Resource<'h> for SolCounter {
@@ -396,8 +396,8 @@ use timeline::HasTimeline;
 ///
 /// ```
 /// # fn main() {}
-/// # use swift::Resource;
-/// # use swift::DerefHistory;
+/// # use peregrine::Resource;
+/// # use peregrine::DerefHistory;
 /// enum MissionPhase {}
 ///
 /// impl<'h> Resource<'h> for MissionPhase {
@@ -463,9 +463,9 @@ impl<'o, M: Model<'o>> Plan<'o, M> {
     /// the `new` method. Just do this:
     ///
     /// ```
-    /// # use swift::operation::EmptyModel;
-    /// use swift::exec::SyncBump;
-    /// use swift::{Plan, Time};
+    /// # use peregrine::operation::EmptyModel;
+    /// use peregrine::exec::SyncBump;
+    /// use peregrine::{Plan, Time};
     ///
     /// let bump = SyncBump::new();
     ///

@@ -4,5 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-swift = { path = "../swift" }
-futures-lite = "2.6.0"
+peregrine = { path = "../peregrine" }

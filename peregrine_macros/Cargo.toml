@@ -1,5 +1,5 @@
 [package]
-name = "swift_macros"
+name = "peregrine_macros"
 version = "0.1.0"
 edition = "2021"
 

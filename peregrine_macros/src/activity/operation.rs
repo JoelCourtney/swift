@@ -169,15 +169,15 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
     let read_only_resource_hashes = read_only_variables
         .iter()
-        .map(|i| format_ident!("_swift_engine_resource_hash_{i}"))
+        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
         .collect::<Vec<_>>();
     let read_write_resource_hashes = read_write_variables
         .iter()
-        .map(|i| format_ident!("_swift_engine_resource_hash_{i}"))
+        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
         .collect::<Vec<_>>();
     let all_read_resource_hashes = all_read_variables
         .iter()
-        .map(|i| format_ident!("_swift_engine_resource_hash_{i}"))
+        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
         .collect::<Vec<_>>();
 
     let Idents {
@@ -195,10 +195,10 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
                 .read(histories, new_env)
                 .await;
         )*
-        #(let mut #write_only_variables = <#write_only_paths as swift::Resource<'o>>::Write::default();)*
+        #(let mut #write_only_variables = <#write_only_paths as peregrine::Resource<'o>>::Write::default();)*
 
         #(
-            let (#read_write_resource_hashes, mut #read_write_variables): (u64, <#read_write_paths as swift::Resource<'o>>::Write) = {
+            let (#read_write_resource_hashes, mut #read_write_variables): (u64, <#read_write_paths as peregrine::Resource<'o>>::Write) = {
                 let (hash, #read_write_variables) = op_internal.#read_write_variables
                     .read(histories, new_env)
                     .await;
@@ -209,21 +209,21 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         let hash = {
             use std::hash::{Hasher, BuildHasher, Hash};
 
-            let mut state = swift::history::SwiftDefaultHashBuilder::default().build_hasher();
-            std::any::TypeId::of::<#op_inner<swift::operation::EmptyModel>>().hash(&mut state);
+            let mut state = peregrine::history::PeregrineDefaultHashBuilder::default().build_hasher();
+            std::any::TypeId::of::<#op_inner<peregrine::operation::EmptyModel>>().hash(&mut state);
 
             #(#all_read_resource_hashes.hash(&mut state);)*
 
             state.finish()
         };
 
-        let (#(#all_write_variables),*) = if let Some(#first_write_variable) = <M::Histories as swift::history::HasHistory<#first_write_path>>::get(histories, hash) {
-            #(let #all_but_one_write_variables = <M::Histories as swift::history::HasHistory<#all_but_one_write_paths>>::get(histories, hash).unwrap();)*
+        let (#(#all_write_variables),*) = if let Some(#first_write_variable) = <M::Histories as peregrine::history::HasHistory<#first_write_path>>::get(histories, hash) {
+            #(let #all_but_one_write_variables = <M::Histories as peregrine::history::HasHistory<#all_but_one_write_paths>>::get(histories, hash).unwrap();)*
             (#(#all_write_variables),*)
         } else {
             let args = self.activity;
             { #body }
-            #(let #all_write_variables = <M::Histories as swift::history::HasHistory<#all_write_paths>>::insert(histories, hash, #all_write_variables);)*
+            #(let #all_write_variables = <M::Histories as peregrine::history::HasHistory<#all_write_paths>>::insert(histories, hash, #all_write_variables);)*
             (#(#all_write_variables),*)
         };
 
@@ -236,63 +236,63 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     };
 
     let timelines_bound = quote! {
-        M::Timelines: #(swift::timeline::HasTimeline<'o, #all_paths, M>)+*
+        M::Timelines: #(peregrine::timeline::HasTimeline<'o, #all_paths, M>)+*
     };
 
     let history_bound = quote! {
-        M::Histories: #(swift::history::HasHistory<'o, #all_write_paths>)+*
+        M::Histories: #(peregrine::history::HasHistory<'o, #all_write_paths>)+*
     };
 
     quote! {
-        struct #op_inner<'o, M: swift::Model<'o>> {
-            #(#all_read_variables: &'o dyn swift::operation::Writer<'o, #all_read_paths, M>,)*
+        struct #op_inner<'o, M: peregrine::Model<'o>> {
+            #(#all_read_variables: &'o dyn peregrine::operation::Writer<'o, #all_read_paths, M>,)*
             output: Option<#output<'o>>,
-            parents: Vec<&'o dyn swift::operation::Operation<'o, M>>
+            parents: Vec<&'o dyn peregrine::operation::Operation<'o, M>>
         }
 
-        struct #op<'o, M: swift::Model<'o>> {
-            inner: swift::reexports::tokio::sync::RwLock<#op_inner<'o, M>>,
+        struct #op<'o, M: peregrine::Model<'o>> {
+            inner: peregrine::reexports::tokio::sync::RwLock<#op_inner<'o, M>>,
             activity: &'o #activity,
         }
 
-        #[swift::reexports::async_trait::async_trait]
-        impl<'o, M: swift::Model<'o>> swift::operation::Operation<'o, M> for #op<'o, M>
+        #[peregrine::reexports::async_trait::async_trait]
+        impl<'o, M: peregrine::Model<'o>> peregrine::operation::Operation<'o, M> for #op<'o, M>
         where #timelines_bound {
-            async fn find_children(&self, time: swift::Time, timelines: &M::Timelines) {
+            async fn find_children(&self, time: peregrine::Time, timelines: &M::Timelines) {
                 let mut write = self.inner.write().await;
                 #(
-                    let new_child = <M::Timelines as swift::timeline::HasTimeline<'o, #all_read_paths, M>>::find_child(timelines, time);
+                    let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_read_paths, M>>::find_child(timelines, time);
                     if !std::ptr::eq(new_child, write.#all_read_variables) {
                         write.#all_read_variables.remove_parent(self).await;
                         write.#all_read_variables = new_child;
                     }
                 )*
             }
-            async fn add_parent(&self, parent: &'o dyn swift::operation::Operation<'o, M>) {
+            async fn add_parent(&self, parent: &'o dyn peregrine::operation::Operation<'o, M>) {
                 let mut write = self.inner.write().await;
                 write.parents.push(parent);
             }
-            async fn remove_parent(&self, parent: &dyn swift::operation::Operation<'o, M>) {
+            async fn remove_parent(&self, parent: &dyn peregrine::operation::Operation<'o, M>) {
                 let mut write = self.inner.write().await;
                 write.parents.retain(|p| !std::ptr::eq(*p, parent));
             }
         }
 
         #(
-            impl<'o, M: swift::Model<'o>> swift::operation::Writer<'o, #all_write_paths, M> for #op<'o, M>
+            impl<'o, M: peregrine::Model<'o>> peregrine::operation::Writer<'o, #all_write_paths, M> for #op<'o, M>
             where #timelines_bound, #history_bound {
-                fn read<'b>(&'o self, histories: &'o M::Histories, env: swift::exec::ExecEnvironment<'b>) -> swift::exec::BumpedFuture<'b, (u64, swift::reexports::tokio::sync::RwLockReadGuard<'o, <#all_write_paths as swift::Resource<'o>>::Read>)> where 'o: 'b {
+                fn read<'b>(&'o self, histories: &'o M::Histories, env: peregrine::exec::ExecEnvironment<'b>) -> peregrine::exec::BumpedFuture<'b, (u64, peregrine::reexports::tokio::sync::RwLockReadGuard<'o, <#all_write_paths as peregrine::Resource<'o>>::Read>)> where 'o: 'b {
                     unsafe { std::pin::Pin::new_unchecked(env.bump.alloc(async move {
                         // If you (the thread) can get the write lock on the node, then you are responsible
                         // for calculating the hash and value if they aren't present.
                         // Otherwise, wait for a read lock and return the cached results.
-                        let read: swift::reexports::tokio::sync::RwLockReadGuard<_> = if let Ok(mut write) = self.inner.try_write() {
+                        let read: peregrine::reexports::tokio::sync::RwLockReadGuard<_> = if let Ok(mut write) = self.inner.try_write() {
                             if write.output.is_none() {
-                                let result = if env.should_spawn == swift::exec::ShouldSpawn::Yes {
+                                let result = if env.should_spawn == peregrine::exec::ShouldSpawn::Yes {
                                     let op_internal = &write;
-                                    swift::exec::EXECUTOR.spawn_scoped(async move {
-                                        let new_bump = swift::exec::SyncBump::new();
-                                        let env = swift::exec::ExecEnvironment::new(&new_bump);
+                                    peregrine::exec::EXECUTOR.spawn_scoped(async move {
+                                        let new_bump = peregrine::exec::SyncBump::new();
+                                        let env = peregrine::exec::ExecEnvironment::new(&new_bump);
                                         #run_internal
                                     }).await
                                 } else {
@@ -310,7 +310,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
                         (
                             read.output.as_ref().unwrap().hash,
-                            swift::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o.output.as_ref().unwrap().#all_write_variables)
+                            peregrine::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o.output.as_ref().unwrap().#all_write_variables)
                         )
                     }))}
                 }
@@ -340,7 +340,7 @@ fn generate_output(idents: &Idents) -> TokenStream {
         #[derive(Clone, Default)]
         struct #output<'h> {
             hash: u64,
-            #(#all_write_variables: <#all_write_paths as swift::Resource<'h>>::Read,)*
+            #(#all_write_variables: <#all_write_paths as peregrine::Resource<'h>>::Read,)*
         }
     }
 }
@@ -373,17 +373,17 @@ fn insert_into_plan(idents: &Idents, when: TokenStream) -> TokenStream {
             let when = #when;
 
             let op_inner = #op_inner {
-                #(#all_read_variables: <M::Timelines as swift::timeline::HasTimeline<#all_read_paths, M>>::find_child(timelines, when),)*
+                #(#all_read_variables: <M::Timelines as peregrine::timeline::HasTimeline<#all_read_paths, M>>::find_child(timelines, when),)*
                 output: None,
                 parents: vec![]
             };
 
             let op = bump.alloc(#op {
-                inner: swift::reexports::tokio::sync::RwLock::new(op_inner),
+                inner: peregrine::reexports::tokio::sync::RwLock::new(op_inner),
                 activity: &self
             });
 
-            #(<M::Timelines as swift::timeline::HasTimeline<#all_write_paths, M>>::insert_operation(timelines, when, op);)*
+            #(<M::Timelines as peregrine::timeline::HasTimeline<#all_write_paths, M>>::insert_operation(timelines, when, op);)*
         }
     }
 }

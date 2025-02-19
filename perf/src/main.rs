@@ -1,6 +1,6 @@
-use swift::exec::SyncBump;
-use swift::{impl_activity, model, Duration, Plan, Resource, Time};
-use swift::{CopyHistory, DerefHistory};
+use peregrine::exec::SyncBump;
+use peregrine::{impl_activity, model, Duration, Plan, Resource, Time};
+use peregrine::{CopyHistory, DerefHistory};
 
 model! {
     pub Perf {

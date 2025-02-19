@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "swift",
+    "peregrine",
     "potato_sat",
-    "swift_macros",
+    "peregrine_macros",
     "perf"
 ]
 default-members = [
-    "swift", "perf", "potato_sat"
+    "peregrine", "perf", "potato_sat"
 ]
 
 resolver = "2"

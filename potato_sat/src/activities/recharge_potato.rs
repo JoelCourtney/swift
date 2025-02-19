@@ -1,7 +1,7 @@
 use crate::{Battery, Mode};
+use peregrine::impl_activity;
+use peregrine::Duration;
 use serde::{Deserialize, Serialize};
-use swift::impl_activity;
-use swift::Duration;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct RechargePotato {

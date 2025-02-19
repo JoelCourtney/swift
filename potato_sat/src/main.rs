@@ -1,5 +1,5 @@
-use swift::{model, Resource};
-use swift::{CopyHistory, DerefHistory};
+use peregrine::{model, Resource};
+use peregrine::{CopyHistory, DerefHistory};
 
 mod activities;
 

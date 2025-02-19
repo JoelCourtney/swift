@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use elsa::sync::FrozenMap;
 use stable_deref_trait::StableDeref;
 
-pub type SwiftDefaultHashBuilder = foldhash::fast::FixedState;
+pub type PeregrineDefaultHashBuilder = foldhash::fast::FixedState;
 
 pub trait HasHistory<'h, R: Resource<'h>> {
     fn insert(&'h self, hash: u64, value: R::Write) -> R::Read;

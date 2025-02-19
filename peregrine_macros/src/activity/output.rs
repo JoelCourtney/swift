@@ -17,9 +17,9 @@ impl ToTokens for Activity {
         }
 
         let result = quote! {
-            impl<'o, M: swift::Model<'o> + 'o> swift::Activity<'o, M> for #name
-            where M::Timelines: 'o + #(swift::timeline::HasTimeline<'o, #resources_used, M>)+*, M::Histories: #(swift::history::HasHistory<'o, #resources_used>)+* {
-                fn decompose(&'o self, start: swift::Time, timelines: &mut M::Timelines, bump: &'o swift::exec::SyncBump) -> swift::Duration {
+            impl<'o, M: peregrine::Model<'o> + 'o> peregrine::Activity<'o, M> for #name
+            where M::Timelines: 'o + #(peregrine::timeline::HasTimeline<'o, #resources_used, M>)+*, M::Histories: #(peregrine::history::HasHistory<'o, #resources_used>)+* {
+                fn decompose(&'o self, start: peregrine::Time, timelines: &mut M::Timelines, bump: &'o peregrine::exec::SyncBump) -> peregrine::Duration {
                     #(#lines)*
                 }
             }

@@ -30,26 +30,26 @@ impl ToTokens for Model {
         let result = quote! {
             #visibility enum #name {}
 
-            impl<'o> swift::Model<'o> for #name {
+            impl<'o> peregrine::Model<'o> for #name {
                 type Timelines = #timelines_name<'o>;
                 type InitialConditions = #initial_conditions_name<'o>;
                 type Histories = #histories_name<'o>;
             }
 
             #visibility struct #initial_conditions_name<'h> {
-                #(#resource_names: <#resource_paths as swift::Resource<'h>>::Write,)*
+                #(#resource_names: <#resource_paths as peregrine::Resource<'h>>::Write,)*
             }
 
             #visibility struct #timelines_name<'o> {
-                #(#timeline_names: swift::timeline::Timeline<'o, #resource_paths, #name>,)*
+                #(#timeline_names: peregrine::timeline::Timeline<'o, #resource_paths, #name>,)*
             }
 
-            impl<'o> From<(swift::Time, &'o swift::exec::SyncBump, #initial_conditions_name<'o>)> for #timelines_name<'o> {
-                fn from((time, bump, inish_condish): (swift::Time, &'o swift::exec::SyncBump, #initial_conditions_name)) -> Self {
+            impl<'o> From<(peregrine::Time, &'o peregrine::exec::SyncBump, #initial_conditions_name<'o>)> for #timelines_name<'o> {
+                fn from((time, bump, inish_condish): (peregrine::Time, &'o peregrine::exec::SyncBump, #initial_conditions_name)) -> Self {
                     Self {
-                        #(#timeline_names: swift::timeline::Timeline::<#resource_paths, #name>::init(
+                        #(#timeline_names: peregrine::timeline::Timeline::<#resource_paths, #name>::init(
                             time,
-                            bump.alloc(swift::operation::InitialConditionOp::new(inish_condish.#resource_names))
+                            bump.alloc(peregrine::operation::InitialConditionOp::new(inish_condish.#resource_names))
                         ),)*
                     }
                 }
@@ -57,23 +57,23 @@ impl ToTokens for Model {
 
             #[derive(Default)]
             #visibility struct #histories_name<'h> {
-                #(#history_names: <#resource_paths as swift::Resource<'h>>::History,)*
+                #(#history_names: <#resource_paths as peregrine::Resource<'h>>::History,)*
             }
 
             #(
-                impl<'h> swift::history::HasHistory<'h, #resource_paths> for #histories_name<'h> {
-                    fn insert(&'h self, hash: u64, value: <#resource_paths as swift::Resource<'h>>::Write) -> <#resource_paths as swift::Resource<'h>>::Read {
+                impl<'h> peregrine::history::HasHistory<'h, #resource_paths> for #histories_name<'h> {
+                    fn insert(&'h self, hash: u64, value: <#resource_paths as peregrine::Resource<'h>>::Write) -> <#resource_paths as peregrine::Resource<'h>>::Read {
                         self.#history_names.insert(hash, value)
                     }
-                    fn get(&'h self, hash: u64) -> Option<<#resource_paths as swift::Resource<'h>>::Read> {
+                    fn get(&'h self, hash: u64) -> Option<<#resource_paths as peregrine::Resource<'h>>::Read> {
                         self.#history_names.get(hash)
                     }
                 }
             )*
 
             #(
-                impl<'o> swift::timeline::HasTimeline<'o, #resource_paths, #name> for #timelines_name<'o> {
-                    fn find_child(&self, time: swift::Time) -> &'o (dyn swift::operation::Writer<'o, #resource_paths, #name>) {
+                impl<'o> peregrine::timeline::HasTimeline<'o, #resource_paths, #name> for #timelines_name<'o> {
+                    fn find_child(&self, time: peregrine::Time) -> &'o (dyn peregrine::operation::Writer<'o, #resource_paths, #name>) {
                         let (last_time, last_op) = self.#timeline_names.last();
                         if last_time < time {
                             last_op
@@ -81,11 +81,11 @@ impl ToTokens for Model {
                             self.#timeline_names.last_before(time).1
                         }
                     }
-                    fn insert_operation(&mut self, time: swift::Time, op: &'o dyn swift::operation::Writer<'o, #resource_paths, #name>) {
+                    fn insert_operation(&mut self, time: peregrine::Time, op: &'o dyn peregrine::operation::Writer<'o, #resource_paths, #name>) {
                         self.#timeline_names.insert(time, op);
                     }
 
-                    fn get_operations(&self, bounds: impl std::ops::RangeBounds<swift::Time>) -> Vec<(swift::Time, &'o dyn swift::operation::Writer<'o, #resource_paths, #name>)> {
+                    fn get_operations(&self, bounds: impl std::ops::RangeBounds<peregrine::Time>) -> Vec<(peregrine::Time, &'o dyn peregrine::operation::Writer<'o, #resource_paths, #name>)> {
                         self.#timeline_names.range(bounds).map(|(t,n)| (t, n)).collect()
                     }
                 }

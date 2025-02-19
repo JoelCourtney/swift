@@ -1,7 +1,7 @@
 #![doc(hidden)]
 
 use crate::exec::{BumpedFuture, ExecEnvironment, SyncBump};
-use crate::history::{HasHistory, SwiftDefaultHashBuilder};
+use crate::history::{HasHistory, PeregrineDefaultHashBuilder};
 use crate::timeline::HasTimeline;
 use crate::{Model, Resource, Time};
 use async_trait::async_trait;
@@ -92,7 +92,7 @@ where
             Pin::new_unchecked(env.bump.alloc(async move {
                 let read_guard = if let Ok(mut write_guard) = self.lock.try_write() {
                     if write_guard.result.is_none() {
-                        let hash = SwiftDefaultHashBuilder::default().hash_one(
+                        let hash = PeregrineDefaultHashBuilder::default().hash_one(
                             bincode::serde::encode_to_vec(
                                 &write_guard.value,
                                 bincode::config::standard(),
