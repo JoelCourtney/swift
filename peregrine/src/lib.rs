@@ -252,10 +252,10 @@
 //!   It also assumes that it is OK to only resimulate a portion of an activity's operations.
 
 use crate::exec::{ExecEnvironment, SyncBump, EXECUTOR, NUM_THREADS};
+use bumpalo::boxed::Box as BumpBox;
 pub use history::{CopyHistory, DerefHistory};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::RangeBounds;
 
@@ -481,13 +481,13 @@ pub trait Resource<'h>: 'static + Sized {
 
 /// A plan session for iterative editing and simulating.
 pub struct Plan<'o, M: Model<'o>> {
-    activities: HashMap<ActivityId, (Time, &'o dyn Activity<'o, M>)>,
+    activities: Vec<*mut dyn Activity<'o, M>>,
     bump: &'o SyncBump,
     id_counter: u32,
     timelines: M::Timelines,
 }
 
-impl<'o, M: Model<'o>> Plan<'o, M> {
+impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
     /// Create a new empty plan from initial conditions.
     ///
     /// This function requires an instance of [SyncBump]. This is an arena allocator used to satisfy
@@ -509,7 +509,7 @@ impl<'o, M: Model<'o>> Plan<'o, M> {
     /// Rust's borrow checker will prevent you from moving or dropping `bump` before dropping the plan.
     pub fn new(bump: &'o SyncBump, time: Time, initial_conditions: M::InitialConditions) -> Self {
         Plan {
-            activities: HashMap::new(),
+            activities: Vec::new(),
             bump,
             timelines: (time, bump, initial_conditions).into(),
             id_counter: 0,
@@ -517,13 +517,11 @@ impl<'o, M: Model<'o>> Plan<'o, M> {
     }
 
     /// Inserts a new activity into the plan, and returns its unique ID.
-    pub fn insert(&mut self, time: Time, activity: impl Activity<'o, M> + 'o) -> ActivityId {
+    pub fn insert(&mut self, time: Time, activity: impl Activity<'o, M> + 'static) -> ActivityId {
         let id = ActivityId::new(self.id_counter);
         self.id_counter += 1;
         let activity = self.bump.alloc(activity);
-        self.activities.insert(id, (time, activity));
-        let activity = &self.activities.get(&id).unwrap().1;
-
+        self.activities.push(activity);
         activity.decompose(time, &mut self.timelines, self.bump);
 
         id
@@ -575,6 +573,14 @@ impl<'o, M: Model<'o>> Plan<'o, M> {
                 nodes.map(|(t, n)| async move { (t, *n.read(histories, env).await.1) }),
             ))
         })
+    }
+}
+
+impl<'o, M: Model<'o>> Drop for Plan<'o, M> {
+    fn drop(&mut self) {
+        for activity in self.activities.drain(..) {
+            drop(unsafe { BumpBox::from_raw(activity) });
+        }
     }
 }
 
