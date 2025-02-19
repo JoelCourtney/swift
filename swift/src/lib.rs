@@ -118,7 +118,7 @@
 //! ```
 //! # fn main() {}
 //! # use serde::{Serialize, Deserialize};
-//! # use swift::{activity, Resource, CopyHistory, DerefHistory, Duration};
+//! # use swift::{impl_activity, Resource, CopyHistory, DerefHistory, Duration};
 //! # enum SolCounter {}
 //! # impl<'h> Resource<'h> for SolCounter {
 //! #     const STATIC: bool = true;
@@ -133,27 +133,25 @@
 //! #     type Write = Vec<String>;
 //! #     type History = DerefHistory<'h, DownlinkBuffer>;
 //! # }
-//! #[derive(Serialize, Deserialize, Clone)]
+//! #[derive(Serialize, Deserialize)]
 //! struct LogCurrentSol {
 //!     /// Verbosity is taken in as an activity argument.
 //!     verbose: bool,
 //! }
 //!
-//! activity! {
-//!     for LogCurrentSol {
-//!         // This is syntactic sugar to declare an operation.
-//!         // It occurs at time `start`, reads both `SolCounter` and `DownlinkBuffer`,
-//!         // and writes to `DownlinkBuffer`.
-//!         @(start) sol: SolCounter, buf: DownlinkBuffer -> buf {
-//!             // Activity arguments are accessible under `args`, not `self`.
-//!             if args.verbose {
-//!                 buf.push(format!("It is currently Sol {sol}"));
-//!             } else {
-//!                 buf.push(format!("Sol {sol}"));
-//!             }
+//! impl_activity! { for LogCurrentSol
+//!     // This is syntactic sugar to declare an operation.
+//!     // It occurs at time `start`, reads both `SolCounter` and `DownlinkBuffer`,
+//!     // and writes to `DownlinkBuffer`.
+//!     @(start) sol: SolCounter, buf: DownlinkBuffer -> buf {
+//!         // Activity arguments are accessible under `args`, not `self`.
+//!         if args.verbose {
+//!             buf.push(format!("It is currently Sol {sol}"));
+//!         } else {
+//!             buf.push(format!("Sol {sol}"));
 //!         }
-//!         Duration::ZERO // Return statement indicates the activity had zero duration
 //!     }
+//!     Duration::ZERO // Return statement indicates the activity had zero duration
 //! }
 //! ```
 //!
@@ -162,7 +160,7 @@
 //! ```
 //! # fn main() {}
 //! # use serde::{Serialize, Deserialize};
-//! # use swift::{activity, Resource, CopyHistory, DerefHistory, Duration, model};
+//! # use swift::{impl_activity, Resource, CopyHistory, DerefHistory, Duration, model};
 //! # enum SolCounter {}
 //! # impl<'h> Resource<'h> for SolCounter {
 //! #     const STATIC: bool = true;
@@ -187,6 +185,38 @@
 //!
 //! This implements the [Model] trait, and generates structs to store initial conditions, [Plans][Plan],
 //! and histories.
+//!
+//! ## Interaction
+//!
+//! ## Possible Features
+//!
+//! This project is currently a proof-of-concept, but I've set it up with future development in mind.
+//! These features could be implemented if there was demand:
+//! - **Stateful activities;** activities that store an internal state as a transient resource that they
+//!   bring to the model
+//! - **Daemon tasks;** background tasks associated with the model that can either generate a statically-known
+//!   set of recurring operations, or create "responsive" operations that are placed immediately after
+//!   another operation writes to a given resource.
+//! - **Maybe-reads and maybe-writes;** optimizations for operations that may or may not read or write a
+//!   resource.
+//! - **Global persistent history;** I made a lot of grand claims about sharing history between plans and
+//!   models, but I haven't actually implemented that yet. Storing history on the filesystem is possible
+//!   already though.
+//! - **Stable graph hashing;** currently there are no guarantees that operations will generate the
+//!   same hashes when the program is recompiled, but this could be fixed.
+//! - **Linked lists in history;** the above example of accumulating a `Vec<String>` buffer in a resource
+//!   is *extremely* inefficient. For every operation that writes to it, the vector will be cloned,
+//!   leading to quadratic runtime and memory usage. It is possible but non-trivial to make a linked
+//!   list that lives inside the history hashmap and persists through serialization. (In reality it
+//!   would be an n-ary tree that branches according to changes in the plan, but for any given simulation
+//!   it would appear to be a linked list.)
+//! - **Look-back reads;** currently operations can only read the current value of resources when
+//!   they happen, but there's no reason why they shouldn't be able to look back to a pre-determined
+//!   time.
+//! - **Activity anchoring;** activities could be defined relative to other activities, as long as the
+//!   relationship is known ahead-of-time.
+//! - **Activity spawning;** the activity body could automatically spawn child activities when inserted
+//!   into the plan, as long as this spawning is only a function of the activity arguments.
 
 use crate::exec::{ExecEnvironment, SyncBump, EXECUTOR, NUM_THREADS};
 pub use history::{CopyHistory, DerefHistory};
@@ -195,7 +225,102 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::RangeBounds;
-pub use swift_macros::{activity, model};
+
+/// Creates a model and associated structs from a selection of resources.
+///
+/// Expects a struct-like item, but without the `struct` keyword. For example:
+///
+/// ```
+/// # fn main() {}
+/// # use swift::{model, Resource, CopyHistory};
+/// # enum ResourceA {}
+/// # impl<'h> Resource<'h> for ResourceA {
+/// #     const STATIC: bool = true;
+/// #     type Read = u32;
+/// #     type Write = u32;
+/// #     type History = CopyHistory<'h, ResourceA>;
+/// # }
+/// # enum ResourceB {}
+/// # impl<'h> Resource<'h> for ResourceB {
+/// #     const STATIC: bool = true;
+/// #     type Read = u32;
+/// #     type Write = u32;
+/// #     type History = CopyHistory<'h, ResourceB>;
+/// # }
+/// model! {
+///     MyModel {
+///         res_a: ResourceA,
+///         res_b: ResourceB
+///     }
+/// }
+/// ```
+///
+/// This generates a few types: a vacant `MyModel` type that implements `Model`, as well as
+/// structs called `MyModelHistories` and `MyModelInitialConditions`. The initial conditions
+/// are used to create a new plan, and has one field for each resource where you can populate
+/// the resource's `Write` value. The histories are used to cache simulation results to be reused
+/// in later simulations.
+pub use swift_macros::model;
+
+/// Implements the [Activity] trait for a type.
+///
+/// Expects a block of statements preceded by `for MyActivity`. The inside of the block is a function
+/// that generates the activity's operations, and returns the duration of the activity. The start time
+/// is accessible through the `start` variable, and the activity arguments are accessible through `args`.
+///
+/// The body of your activity function will contain operations that use a special syntactic sugar.
+/// Let's break down this example:
+///
+/// ```
+/// # fn main() {}
+/// # use swift::{impl_activity, Resource, CopyHistory, DerefHistory, Duration};
+/// use serde::{Serialize, Deserialize};
+///
+/// enum SolCounter {}
+/// impl<'h> Resource<'h> for SolCounter {
+///     const STATIC: bool = true;
+///     type Read = u32;
+///     type Write = u32;
+///     type History = CopyHistory<'h, SolCounter>;
+/// }
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct IncrementSol;
+///
+/// impl_activity! { for IncrementSol
+///     @(start) sol: SolCounter -> sol {
+///         sol += 1;
+///     }
+///     Duration::ZERO // Return statement indicates the activity had zero duration
+/// }
+/// ```
+///
+/// 1. First declare an empty struct `IncrementSol` to be our activity type. It has to
+///    implement [Serialize], and [DeserializeOwned], and this is done through derive macros
+///    provided by serde.
+/// 2. Call [impl_activity] with the preamble `for IncrementSol`. Everything else inside the
+///    macro is your function body. In this context, `start` is the start time of the activity,
+///    and `args` are the arguments (in this case there are none).
+/// 3. Declare operation by starting a statement with `@`.
+///    - `(start)` indicates the time the operation happens at. It can be any valid rust expression
+///      that evaluates to a [Duration].
+///    - `sol: SolCounter` declares `SolCounter` as a resource read, available in the variable `sol`.
+///    - `-> sol` declares that the `SolCounter` is also a resource write. The `: SolCounter` type
+///      is implied, but you can write it explicitly if you want.
+///    - You can read and write to as many resources as you want in one operation, just declare them
+///      in a comma-separated list. Any write-only resources must have the explicit type tag.
+///      (e.g. `sol: SolCounter, buffer: DownlinkBuffer, temp: Temperature -> buffer, safe_mode: SafeMode`
+///      reads from `SolCounter` and `Temperature`, writes to `SafeMode`, and read-writes `DownlinkBuffer`.)
+///    - The body of the operation can do whatever you want, as long as it is deterministic.
+///      The body is also an async context; you could make a non-blocking web request if you want,
+///      as long as it can be assumed to always return the same output for the same input.
+/// 4. Finally, we end the activity body by returning `Duration::ZERO`, which means the activity took
+///    zero duration.
+///
+/// It is *technically* valid to generate operations before the start time or after the declared end time.
+/// It would just be very un-hygienic and potentially hard to debug.
+pub use swift_macros::impl_activity;
+
 pub mod exec;
 pub mod history;
 pub mod operation;
@@ -321,6 +446,7 @@ pub trait Resource<'h>: 'static + Sized {
     type History: HasHistory<'h, Self> + Default;
 }
 
+/// A plan session for iterative editing and simulating.
 pub struct Plan<'o, M: Model<'o>> {
     activities: HashMap<ActivityId, (Time, &'o dyn Activity<'o, M>)>,
     bump: &'o SyncBump,
@@ -329,6 +455,25 @@ pub struct Plan<'o, M: Model<'o>> {
 }
 
 impl<'o, M: Model<'o>> Plan<'o, M> {
+    /// Create a new empty plan from initial conditions.
+    ///
+    /// This function requires an instance of [SyncBump]. This is an arena allocator used to satisfy
+    /// rust's borrowing rules without unsafe code or smart pointers. This is an unfortunate implementation detail
+    /// as a result of Rust's borrow checker that makes it impossible to generate this object inside
+    /// the `new` method. Just do this:
+    ///
+    /// ```
+    /// # use swift::operation::EmptyModel;
+    /// use swift::exec::SyncBump;
+    /// use swift::{Plan, Time};
+    ///
+    /// let bump = SyncBump::new();
+    ///
+    /// // Replace `EmptyModel`, the start time, and initial conditions with reasonable values.
+    /// let plan = Plan::<EmptyModel>::new(&bump, Time::now().unwrap(), ());
+    /// ```
+    ///
+    /// Rust's borrow checker will prevent you from moving or dropping `bump` before dropping the plan.
     pub fn new(bump: &'o SyncBump, time: Time, initial_conditions: M::InitialConditions) -> Self {
         Plan {
             activities: HashMap::new(),
@@ -410,7 +555,7 @@ pub trait Model<'o>: Sync {
 }
 
 /// An activity, which decomposes into a statically-known set of operations. Implemented
-/// with the [activity] macro.
+/// with the [impl_activity] macro.
 pub trait Activity<'o, M: Model<'o>>: Send + Sync {
     fn decompose(
         &'o self,

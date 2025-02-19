@@ -128,10 +128,10 @@ impl Model<'_> for EmptyModel {
     type Timelines = EmptyTimelines;
 }
 
-pub enum EmptyTimelines {}
+pub struct EmptyTimelines;
 
 impl<'o> From<(Time, &'o SyncBump, ())> for EmptyTimelines {
     fn from(_value: (Time, &'o SyncBump, ())) -> Self {
-        todo!()
+        Self
     }
 }

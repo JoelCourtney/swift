@@ -28,7 +28,7 @@ impl ToTokens for Model {
         let histories_name = format_ident!("{name}Histories");
 
         let result = quote! {
-            #visibility struct #name;
+            #visibility enum #name {}
 
             impl<'o> swift::Model<'o> for #name {
                 type Timelines = #timelines_name<'o>;

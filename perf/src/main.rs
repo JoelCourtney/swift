@@ -1,5 +1,5 @@
 use swift::exec::SyncBump;
-use swift::{activity, model, Duration, Plan, Resource, Time};
+use swift::{impl_activity, model, Duration, Plan, Resource, Time};
 use swift::{CopyHistory, DerefHistory};
 
 model! {
@@ -28,33 +28,27 @@ impl<'h> Resource<'h> for B {
 }
 
 struct IncrementA;
-activity! {
-    for IncrementA {
-        @(start) a: A -> a {
-            a += 1;
-        }
-        Duration::ZERO
+impl_activity! { for IncrementA
+    @(start) a: A -> a {
+        a += 1;
     }
+    Duration::ZERO
 }
 
 struct ConvertAToB;
-activity! {
-    for ConvertAToB {
-        @(start) a: A -> b: B {
-            b = a.to_string()
-        }
-        Duration::ZERO
+impl_activity! { for ConvertAToB
+    @(start) a: A -> b: B {
+        b = a.to_string()
     }
+    Duration::ZERO
 }
 
 struct ConvertBToA;
-activity! {
-    for ConvertBToA {
-        @(start) b: B -> a: A {
-            a = b.parse().unwrap();
-        }
-        Duration::ZERO
+impl_activity! { for ConvertBToA
+    @(start) b: B -> a: A {
+        a = b.parse().unwrap();
     }
+    Duration::ZERO
 }
 
 fn main() {

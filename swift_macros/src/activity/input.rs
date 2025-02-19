@@ -4,20 +4,17 @@ use crate::activity::{Activity, Op, StmtOrOp};
 use proc_macro2::Ident;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
-use syn::{braced, parenthesized, Block, Error, Expr, Path, Result, Stmt, Token};
+use syn::{parenthesized, Block, Error, Expr, Path, Result, Stmt, Token};
 
 impl Parse for Activity {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
+    fn parse(input: ParseStream) -> Result<Self> {
         <Token![for]>::parse(input)?;
 
         let name: Ident = input.parse()?;
 
-        let body;
-        braced!(body in input);
-
         let mut lines: Vec<StmtOrOp> = vec![];
-        while !body.is_empty() {
-            lines.push(body.parse().unwrap());
+        while !input.is_empty() {
+            lines.push(input.parse()?);
         }
 
         Ok(Activity { name, lines })
