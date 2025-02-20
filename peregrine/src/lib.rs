@@ -251,11 +251,12 @@
 //!   all operations will produce the same output, and if a cached value exists in history then it is valid.
 //!   It also assumes that it is OK to only resimulate a portion of an activity's operations.
 
-use crate::exec::{ExecEnvironment, SyncBump, EXECUTOR, NUM_THREADS};
+use crate::exec::{ExecEnvironment, EXECUTOR, NUM_THREADS};
 use bumpalo::boxed::Box as BumpBox;
 pub use history::{CopyHistory, DerefHistory};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::RangeBounds;
 
@@ -360,6 +361,8 @@ pub mod operation;
 pub mod reexports;
 pub mod timeline;
 
+use crate::operation::Operation;
+pub use exec::SyncBump;
 pub use hifitime::Duration;
 pub use hifitime::Epoch as Time;
 use history::HasHistory;
@@ -481,10 +484,15 @@ pub trait Resource<'h>: 'static + Sized {
 
 /// A plan session for iterative editing and simulating.
 pub struct Plan<'o, M: Model<'o>> {
-    activities: Vec<*mut dyn Activity<'o, M>>,
+    activities: HashMap<ActivityId, DecomposedActivity<'o, M>>,
     bump: &'o SyncBump,
     id_counter: u32,
     timelines: M::Timelines,
+}
+
+struct DecomposedActivity<'o, M> {
+    activity: *mut dyn Activity<'o, M>,
+    operations: Vec<&'o dyn Operation<'o, M>>,
 }
 
 impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
@@ -496,22 +504,31 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
     /// the `new` method. Just do this:
     ///
     /// ```
-    /// # use peregrine::operation::EmptyModel;
+    /// // Dummy resource and model; replace with a real model.
     /// use peregrine::exec::SyncBump;
-    /// use peregrine::{Plan, Time};
+    /// use peregrine::{CopyHistory, Plan, Time};
+    /// enum MyResource {}
+    /// impl<'h> peregrine::Resource<'h> for MyResource {
+    ///     const STATIC: bool = true;
+    ///     type Read = ();
+    ///     type Write = ();
+    ///     type History = CopyHistory<'h, MyResource>;
+    /// }
+    /// peregrine::model! { MyModel { res: MyResource } }
     ///
+    /// // Create a sync bump to be stored outside the plan.
     /// let bump = SyncBump::new();
     ///
-    /// // Replace `EmptyModel`, the start time, and initial conditions with reasonable values.
-    /// let plan = Plan::<EmptyModel>::new(&bump, Time::now().unwrap(), ());
+    /// // Create a plan with the bump.
+    /// let plan = Plan::<MyModel>::new(&bump, Time::now().unwrap(), MyModelInitialConditions { res: () });
     /// ```
     ///
     /// Rust's borrow checker will prevent you from moving or dropping `bump` before dropping the plan.
     pub fn new(bump: &'o SyncBump, time: Time, initial_conditions: M::InitialConditions) -> Self {
         Plan {
-            activities: Vec::new(),
+            activities: HashMap::new(),
             bump,
-            timelines: (time, bump, initial_conditions).into(),
+            timelines: (timeline::epoch_to_duration(time), bump, initial_conditions).into(),
             id_counter: 0,
         }
     }
@@ -521,15 +538,31 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
         let id = ActivityId::new(self.id_counter);
         self.id_counter += 1;
         let activity = self.bump.alloc(activity);
-        self.activities.push(activity);
-        activity.decompose(time, &mut self.timelines, self.bump);
+        let activity_pointer = activity as *mut dyn Activity<'o, M>;
+        let (_duration, operations) = activity.decompose(time, &self.timelines, self.bump);
+
+        for op in &operations {
+            op.insert_self(&mut self.timelines);
+        }
+
+        self.activities.insert(
+            id,
+            DecomposedActivity {
+                activity: activity_pointer,
+                operations,
+            },
+        );
 
         id
     }
 
     /// Removes an activity from the plan, by ID.
-    pub fn remove(&self, _id: ActivityId) {
-        todo!()
+    pub fn remove(&mut self, id: ActivityId) {
+        let decomposed = self.activities.remove(&id).unwrap();
+        for op in decomposed.operations {
+            op.remove_self(&mut self.timelines);
+        }
+        drop(unsafe { BumpBox::from_raw(decomposed.activity) });
     }
 
     /// Returns a view into a section of a resource's timeline. After creating a plan, call
@@ -548,7 +581,15 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
         M::Timelines: HasTimeline<'o, R, M>,
     {
         let bump = SyncBump::new();
-        let nodes = self.timelines.get_operations(bounds).into_iter();
+        let nodes = self
+            .timelines
+            .get_operations((
+                bounds
+                    .start_bound()
+                    .map(|t| timeline::epoch_to_duration(*t)),
+                bounds.end_bound().map(|t| timeline::epoch_to_duration(*t)),
+            ))
+            .into_iter();
         let env = ExecEnvironment::new(&bump);
         std::thread::scope(move |scope| {
             // EXPLANATION:
@@ -569,17 +610,22 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
                 scope.spawn(move || futures::executor::block_on(EXECUTOR.run(shutdown.recv())));
             }
 
-            futures::executor::block_on(futures::future::join_all(
-                nodes.map(|(t, n)| async move { (t, *n.read(histories, env).await.1) }),
-            ))
+            futures::executor::block_on(futures::future::join_all(nodes.map(|(t, n)| async move {
+                (
+                    timeline::duration_to_epoch(t),
+                    *n.read(histories, env).await.1,
+                )
+            })))
         })
     }
 }
 
 impl<'o, M: Model<'o>> Drop for Plan<'o, M> {
     fn drop(&mut self) {
-        for activity in self.activities.drain(..) {
-            drop(unsafe { BumpBox::from_raw(activity) });
+        for decomposed in self.activities.values_mut() {
+            unsafe {
+                decomposed.activity.drop_in_place();
+            }
         }
     }
 }
@@ -590,7 +636,7 @@ impl<'o, M: Model<'o>> Drop for Plan<'o, M> {
 pub trait Model<'o>: Sync {
     type InitialConditions;
     type Histories: 'o + Sync + Default;
-    type Timelines: Sync + From<(Time, &'o SyncBump, Self::InitialConditions)>;
+    type Timelines: Sync + From<(Duration, &'o SyncBump, Self::InitialConditions)>;
 }
 
 /// An activity, which decomposes into a statically-known set of operations. Implemented
@@ -599,9 +645,13 @@ pub trait Activity<'o, M: Model<'o>>: Send + Sync {
     fn decompose(
         &'o self,
         start: Time,
-        timelines: &mut M::Timelines,
+        timelines: &M::Timelines,
         bump: &'o SyncBump,
-    ) -> Duration;
+    ) -> (Duration, Vec<&'o dyn Operation<'o, M>>);
+}
+
+pub trait ActivityRemover<'o, M: Model<'o>> {
+    fn remove(self, timelines: &mut M::Timelines);
 }
 
 /// A unique activity ID.

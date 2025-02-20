@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
+use std::collections::HashMap;
 
 pub(crate) fn process_operation(input: String) -> TokenStream {
     let mut writes = HashMap::new();
@@ -77,12 +76,12 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
         .collect();
 
     let uuid = uuid::Uuid::new_v4().to_string().replace("-", "_");
-    let op_inner = format_ident!("{activity}OpInner_{uuid}");
     let output_ident = format_ident!("{activity}OpOutput_{uuid}");
     let op = format_ident!("{activity}Op_{uuid}");
+    let op_relationships = format_ident!("{activity}OpRelationships_{uuid}");
 
     let idents = Idents {
-        op_inner,
+        op_relationships,
         op,
         output: output_ident,
         activity,
@@ -109,19 +108,19 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
 
     let output_struct = generate_output(&idents);
 
-    let insert_into_plan = insert_into_plan(&idents, when);
+    let result = result(&idents, when);
 
     quote! {
         {
             #op
             #output_struct
-            #insert_into_plan
+            #result
         }
     }
 }
 
 struct Idents {
-    op_inner: Ident,
+    op_relationships: Ident,
     op: Ident,
     output: Ident,
     activity: Ident,
@@ -181,7 +180,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         .collect::<Vec<_>>();
 
     let Idents {
-        op_inner,
+        op_relationships,
         op,
         output,
         activity,
@@ -191,26 +190,31 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     let run_internal = quote! {
         let new_env = env.increment();
 
-        #(let (#read_only_resource_hashes, #read_only_variables) = op_internal.#read_only_variables
+        let relationships = self.relationships.blocking_lock();
+
+        #(let (#read_only_resource_hashes, #read_only_variables) = relationships.#read_only_variables
                 .read(histories, new_env)
                 .await;
         )*
-        #(let mut #write_only_variables = <#write_only_paths as peregrine::Resource<'o>>::Write::default();)*
 
         #(
             let (#read_write_resource_hashes, mut #read_write_variables): (u64, <#read_write_paths as peregrine::Resource<'o>>::Write) = {
-                let (hash, #read_write_variables) = op_internal.#read_write_variables
+                let (hash, #read_write_variables) = relationships.#read_write_variables
                     .read(histories, new_env)
                     .await;
                 (hash, (*#read_write_variables).into())
             };
         )*
 
+        std::mem::drop(relationships);
+
+        #(let mut #write_only_variables = <#write_only_paths as peregrine::Resource<'o>>::Write::default();)*
+
         let hash = {
             use std::hash::{Hasher, BuildHasher, Hash};
 
             let mut state = peregrine::history::PeregrineDefaultHashBuilder::default().build_hasher();
-            std::any::TypeId::of::<#op_inner<peregrine::operation::EmptyModel>>().hash(&mut state);
+            std::any::TypeId::of::<#output>().hash(&mut state);
 
             #(#all_read_resource_hashes.hash(&mut state);)*
 
@@ -244,37 +248,86 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
     };
 
     quote! {
-        struct #op_inner<'o, M: peregrine::Model<'o>> {
+        struct #op_relationships<'o, M: peregrine::Model<'o>> {
+            parents: Vec<&'o dyn peregrine::operation::Operation<'o, M>>,
             #(#all_read_variables: &'o dyn peregrine::operation::Writer<'o, #all_read_paths, M>,)*
-            output: Option<#output<'o>>,
-            parents: Vec<&'o dyn peregrine::operation::Operation<'o, M>>
+
         }
 
         struct #op<'o, M: peregrine::Model<'o>> {
-            inner: peregrine::reexports::tokio::sync::RwLock<#op_inner<'o, M>>,
+            result: peregrine::reexports::tokio::sync::RwLock<Option<#output<'o>>>,
+            relationships: peregrine::reexports::tokio::sync::Mutex<#op_relationships<'o, M>>,
             activity: &'o #activity,
+            time: peregrine::Duration,
         }
 
-        #[peregrine::reexports::async_trait::async_trait]
         impl<'o, M: peregrine::Model<'o>> peregrine::operation::Operation<'o, M> for #op<'o, M>
-        where #timelines_bound {
-            async fn find_children(&self, time: peregrine::Time, timelines: &M::Timelines) {
-                let mut write = self.inner.write().await;
+        where #timelines_bound, #history_bound {
+            fn find_children(&'o self, time_of_change: peregrine::Duration, timelines: &M::Timelines) {
+                if time_of_change >= self.time { return; }
+
+                let mut changed = false;
+
+                let mut lock = self.relationships.blocking_lock();
                 #(
-                    let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_read_paths, M>>::find_child(timelines, time);
-                    if !std::ptr::eq(new_child, write.#all_read_variables) {
-                        write.#all_read_variables.remove_parent(self).await;
-                        write.#all_read_variables = new_child;
+                    let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_read_paths, M>>::find_child(timelines, self.time);
+                    if !std::ptr::eq(new_child, lock.#all_read_variables) {
+                        lock.#all_read_variables.remove_parent(self);
+                        new_child.add_parent(self);
+                        lock.#all_read_variables = new_child;
+                        changed = true;
                     }
                 )*
+
+                drop(lock);
+
+                if changed {
+                    let mut queue = std::collections::VecDeque::<&'o dyn peregrine::operation::Operation<'o, M>>::new();
+                    queue.push_back(self);
+                    while let Some(op) = queue.pop_front() {
+                        if op.clear_cache() {
+                            queue.extend(op.parents());
+                        }
+                    }
+                }
             }
-            async fn add_parent(&self, parent: &'o dyn peregrine::operation::Operation<'o, M>) {
-                let mut write = self.inner.write().await;
-                write.parents.push(parent);
+            fn add_parent(&self, parent: &'o dyn peregrine::operation::Operation<'o, M>) {
+                self.relationships.blocking_lock().parents.push(parent);
             }
-            async fn remove_parent(&self, parent: &dyn peregrine::operation::Operation<'o, M>) {
-                let mut write = self.inner.write().await;
-                write.parents.retain(|p| !std::ptr::eq(*p, parent));
+            fn remove_parent(&self, parent: &dyn peregrine::operation::Operation<'o, M>) {
+                self.relationships.blocking_lock().parents.retain(|p| !std::ptr::eq(*p, parent));
+            }
+
+            fn insert_self(&'o self, timelines: &mut M::Timelines) {
+                #(
+                    let previous = <M::Timelines as peregrine::timeline::HasTimeline<#all_write_paths, M>>::insert_operation(timelines, self.time, self);
+                    previous.notify_parents(self.time, timelines);
+                )*
+                let lock = self.relationships.blocking_lock();
+                #(lock.#all_read_variables.add_parent(self);)*
+            }
+            fn remove_self(&self, timelines: &mut M::Timelines) {
+                #(
+                    <M::Timelines as peregrine::timeline::HasTimeline<#all_write_paths, M>>::remove_operation(timelines, self.time);
+                )*
+                self.notify_parents(self.time, timelines);
+                let lock = self.relationships.blocking_lock();
+                #(lock.#all_read_variables.remove_parent(self);)*
+            }
+
+            fn parents(&self) -> Vec<&'o dyn peregrine::operation::Operation<'o, M>> {
+                self.relationships.blocking_lock().parents.clone()
+            }
+            fn notify_parents(&self, time_of_change: peregrine::Duration, timelines: &M::Timelines) {
+                let lock = self.relationships.blocking_lock();
+                let parents = lock.parents.clone();
+                drop(lock);
+                for parent in parents {
+                    parent.find_children(time_of_change, timelines);
+                }
+            }
+            fn clear_cache(&self) -> bool {
+                self.result.blocking_write().take().is_some()
             }
         }
 
@@ -286,31 +339,29 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
                         // If you (the thread) can get the write lock on the node, then you are responsible
                         // for calculating the hash and value if they aren't present.
                         // Otherwise, wait for a read lock and return the cached results.
-                        let read: peregrine::reexports::tokio::sync::RwLockReadGuard<_> = if let Ok(mut write) = self.inner.try_write() {
-                            if write.output.is_none() {
+                        let read: peregrine::reexports::tokio::sync::RwLockReadGuard<_> = if let Ok(mut write) = self.result.try_write() {
+                            if write.is_none() {
                                 let result = if env.should_spawn == peregrine::exec::ShouldSpawn::Yes {
-                                    let op_internal = &write;
                                     peregrine::exec::EXECUTOR.spawn_scoped(async move {
                                         let new_bump = peregrine::exec::SyncBump::new();
                                         let env = peregrine::exec::ExecEnvironment::new(&new_bump);
                                         #run_internal
                                     }).await
                                 } else {
-                                    let op_internal = &write;
                                     #run_internal
                                 };
-                                write.output = result;
+                                *write = result;
                                 write.downgrade()
                             } else {
                                 write.downgrade()
                             }
                         } else {
-                            self.inner.read().await
+                            self.result.read().await
                         };
 
                         (
-                            read.output.as_ref().unwrap().hash,
-                            peregrine::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o.output.as_ref().unwrap().#all_write_variables)
+                            read.as_ref().unwrap().hash,
+                            peregrine::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o.as_ref().unwrap().#all_write_variables)
                         )
                     }))}
                 }
@@ -345,11 +396,14 @@ fn generate_output(idents: &Idents) -> TokenStream {
     }
 }
 
-fn insert_into_plan(idents: &Idents, when: TokenStream) -> TokenStream {
-    let Idents { op, op_inner, .. } = idents;
+fn result(idents: &Idents, when: TokenStream) -> TokenStream {
+    let Idents {
+        op,
+        op_relationships,
+        ..
+    } = idents;
 
     let (read_only_variables, read_only_paths) = idents.reads.iter().collect::<(Vec<_>, Vec<_>)>();
-    let (_, write_only_paths) = idents.writes.iter().collect::<(Vec<_>, Vec<_>)>();
     let (read_write_variables, read_write_paths) =
         idents.read_writes.iter().collect::<(Vec<_>, Vec<_>)>();
 
@@ -363,27 +417,21 @@ fn insert_into_plan(idents: &Idents, when: TokenStream) -> TokenStream {
         .chain(read_write_paths.iter())
         .collect::<Vec<_>>();
 
-    let all_write_paths = write_only_paths
-        .iter()
-        .chain(read_write_paths.iter())
-        .collect::<Vec<_>>();
-
     quote! {
         {
-            let when = #when;
-
-            let op_inner = #op_inner {
-                #(#all_read_variables: <M::Timelines as peregrine::timeline::HasTimeline<#all_read_paths, M>>::find_child(timelines, when),)*
-                output: None,
-                parents: vec![]
-            };
+            let when = peregrine::timeline::epoch_to_duration(#when);
 
             let op = bump.alloc(#op {
-                inner: peregrine::reexports::tokio::sync::RwLock::new(op_inner),
-                activity: &self
+                result: peregrine::reexports::tokio::sync::RwLock::new(None),
+                activity: &self,
+                relationships: peregrine::reexports::tokio::sync::Mutex::new(#op_relationships {
+                    parents: Vec::new(),
+                    #(#all_read_variables: <M::Timelines as peregrine::timeline::HasTimeline<#all_read_paths, M>>::find_child(timelines, when),)*
+                }),
+                time: when
             });
 
-            #(<M::Timelines as peregrine::timeline::HasTimeline<#all_write_paths, M>>::insert_operation(timelines, when, op);)*
+            operations.push(op);
         }
     }
 }

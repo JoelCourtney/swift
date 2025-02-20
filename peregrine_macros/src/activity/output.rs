@@ -7,20 +7,38 @@ impl ToTokens for Activity {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Activity { name, lines } = &self;
 
-        let mut resources_used = vec![];
+        let mut reads = vec![];
+        let mut writes = vec![];
+        let mut read_writes = vec![];
         for line in &self.lines {
             if let StmtOrOp::Op(op) = line {
-                resources_used.extend(op.reads.values().cloned());
-                resources_used.extend(op.writes.values().cloned());
-                resources_used.extend(op.read_writes.values().cloned());
+                reads.extend(op.reads.values().cloned());
+                writes.extend(op.writes.values().cloned());
+                read_writes.extend(op.read_writes.values().cloned());
             }
         }
 
+        let resources_used = reads
+            .iter()
+            .chain(writes.iter())
+            .chain(read_writes.iter())
+            .collect::<Vec<_>>();
+
+        let timelines_bound = quote! {
+            M::Timelines: 'o + #(peregrine::timeline::HasTimeline<'o, #resources_used, M>)+*
+        };
+
+        let histories_bound = quote! {
+            M::Histories: #(peregrine::history::HasHistory<'o, #resources_used>)+*
+        };
+
         let result = quote! {
             impl<'o, M: peregrine::Model<'o> + 'o> peregrine::Activity<'o, M> for #name
-            where M::Timelines: 'o + #(peregrine::timeline::HasTimeline<'o, #resources_used, M>)+*, M::Histories: #(peregrine::history::HasHistory<'o, #resources_used>)+* {
-                fn decompose(&'o self, start: peregrine::Time, timelines: &mut M::Timelines, bump: &'o peregrine::exec::SyncBump) -> peregrine::Duration {
-                    #(#lines)*
+            where #timelines_bound, #histories_bound {
+                fn decompose(&'o self, start: peregrine::Time, timelines: &M::Timelines, bump: &'o peregrine::exec::SyncBump) -> (peregrine::Duration, Vec<&'o dyn peregrine::operation::Operation<'o, M>>) {
+                    let mut operations: Vec<&'o dyn peregrine::operation::Operation<'o, M>> = vec![];
+                    let duration = { #(#lines)* };
+                    (duration, operations)
                 }
             }
         };

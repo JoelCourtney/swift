@@ -44,12 +44,12 @@ impl ToTokens for Model {
                 #(#timeline_names: peregrine::timeline::Timeline<'o, #resource_paths, #name>,)*
             }
 
-            impl<'o> From<(peregrine::Time, &'o peregrine::exec::SyncBump, #initial_conditions_name<'o>)> for #timelines_name<'o> {
-                fn from((time, bump, inish_condish): (peregrine::Time, &'o peregrine::exec::SyncBump, #initial_conditions_name)) -> Self {
+            impl<'o> From<(peregrine::Duration, &'o peregrine::exec::SyncBump, #initial_conditions_name<'o>)> for #timelines_name<'o> {
+                fn from((time, bump, inish_condish): (peregrine::Duration, &'o peregrine::exec::SyncBump, #initial_conditions_name)) -> Self {
                     Self {
                         #(#timeline_names: peregrine::timeline::Timeline::<#resource_paths, #name>::init(
                             time,
-                            bump.alloc(peregrine::operation::InitialConditionOp::new(inish_condish.#resource_names))
+                            bump.alloc(peregrine::operation::InitialConditionOp::new(time, inish_condish.#resource_names))
                         ),)*
                     }
                 }
@@ -73,7 +73,7 @@ impl ToTokens for Model {
 
             #(
                 impl<'o> peregrine::timeline::HasTimeline<'o, #resource_paths, #name> for #timelines_name<'o> {
-                    fn find_child(&self, time: peregrine::Time) -> &'o (dyn peregrine::operation::Writer<'o, #resource_paths, #name>) {
+                    fn find_child(&self, time: peregrine::Duration) -> &'o (dyn peregrine::operation::Writer<'o, #resource_paths, #name>) {
                         let (last_time, last_op) = self.#timeline_names.last();
                         if last_time < time {
                             last_op
@@ -81,11 +81,14 @@ impl ToTokens for Model {
                             self.#timeline_names.last_before(time).1
                         }
                     }
-                    fn insert_operation(&mut self, time: peregrine::Time, op: &'o dyn peregrine::operation::Writer<'o, #resource_paths, #name>) {
-                        self.#timeline_names.insert(time, op);
+                    fn insert_operation(&mut self, time: peregrine::Duration, op: &'o dyn peregrine::operation::Writer<'o, #resource_paths, #name>) -> &'o dyn peregrine::operation::Writer<'o, #resource_paths, #name> {
+                        self.#timeline_names.insert(time, op)
+                    }
+                    fn remove_operation(&mut self, time: peregrine::Duration) {
+                        self.#timeline_names.remove(time);
                     }
 
-                    fn get_operations(&self, bounds: impl std::ops::RangeBounds<peregrine::Time>) -> Vec<(peregrine::Time, &'o dyn peregrine::operation::Writer<'o, #resource_paths, #name>)> {
+                    fn get_operations(&self, bounds: impl std::ops::RangeBounds<peregrine::Duration>) -> Vec<(peregrine::Duration, &'o dyn peregrine::operation::Writer<'o, #resource_paths, #name>)> {
                         self.#timeline_names.range(bounds).map(|(t,n)| (t, n)).collect()
                     }
                 }
