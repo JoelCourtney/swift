@@ -11,6 +11,10 @@ license = "MIT OR Apache-2.0"
 keywords = ["simulation"]
 categories = ["aerospace::simulation", "simulation"]
 
+[features]
+nightly = []
+default = []
+
 [dependencies]
 
 ## INTERNAL

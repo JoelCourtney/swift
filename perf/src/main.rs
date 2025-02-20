@@ -1,4 +1,5 @@
 use peregrine::exec::SyncBump;
+use peregrine::reexports::hifitime::TimeScale;
 use peregrine::{impl_activity, model, Duration, Plan, Resource, Time};
 use peregrine::{CopyHistory, DerefHistory};
 
@@ -54,7 +55,7 @@ impl_activity! { for ConvertBToA
 fn main() {
     let bump = SyncBump::new();
     let histories = PerfHistories::default();
-    let plan_start = Time::now().unwrap();
+    let plan_start = Time::now().unwrap().to_time_scale(TimeScale::TAI);
     let mut plan = Plan::<Perf>::new(
         &bump,
         plan_start,
@@ -64,26 +65,20 @@ fn main() {
         },
     );
 
-    let offset = Duration::from_microseconds(1.0);
+    let mut cursor = plan_start + Duration::from_microseconds(1.0);
 
-    for i in 0..1_000_000 {
-        plan.insert(
-            plan_start + offset + Duration::from_seconds(1.0) * 3 * i,
-            IncrementA,
-        );
-        plan.insert(
-            plan_start + offset + Duration::from_seconds(1.0) * 3 * i + Duration::from_seconds(1.0),
-            ConvertAToB,
-        );
-        plan.insert(
-            plan_start + offset + Duration::from_seconds(1.0) * 3 * i + Duration::from_seconds(2.0),
-            ConvertBToA,
-        );
+    for _ in 0..10_000_000 {
+        plan.insert(cursor, IncrementA);
+        cursor += Duration::from_seconds(1.0);
+        plan.insert(cursor, ConvertAToB);
+        cursor += Duration::from_seconds(1.0);
+        plan.insert(cursor, ConvertBToA);
+        cursor += Duration::from_seconds(1.0);
     }
 
     println!("built");
 
-    let start = plan_start + Duration::from_seconds(3_000_000.0 - 10.0);
+    let start = plan_start + Duration::from_seconds(30_000_000.0 - 10.0);
     let result = plan.view::<B>(start..start + Duration::from_seconds(10.0), &histories);
 
     dbg!(result);

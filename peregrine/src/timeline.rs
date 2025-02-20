@@ -71,11 +71,29 @@ where
         self.0.range(time..).next().map(move |t| (*t.0, *t.1))
     }
 
+    #[cfg(not(feature = "nightly"))]
     pub fn insert(
         &mut self,
         time: Duration,
         value: &'o (dyn Writer<'o, R, M>),
     ) -> &'o (dyn Writer<'o, R, M>) {
+        self.0.insert(time, value);
+        self.last_before(time).1
+    }
+
+    #[cfg(feature = "nightly")]
+    pub fn insert(
+        &mut self,
+        time: Duration,
+        value: &'o (dyn Writer<'o, R, M>),
+    ) -> &'o (dyn Writer<'o, R, M>) {
+        let mut cursor_mut = self.0.upper_bound_mut(std::ops::Bound::Unbounded);
+        if let Some((t, _)) = cursor_mut.peek_prev() {
+            if *t < time {
+                cursor_mut.insert_before(time, value).unwrap();
+                return *cursor_mut.as_cursor().peek_prev().unwrap().1;
+            }
+        }
         self.0.insert(time, value);
         self.last_before(time).1
     }

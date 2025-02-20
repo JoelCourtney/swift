@@ -251,6 +251,8 @@
 //!   all operations will produce the same output, and if a cached value exists in history then it is valid.
 //!   It also assumes that it is OK to only resimulate a portion of an activity's operations.
 
+#![cfg_attr(feature = "nightly", feature(btree_cursors))]
+
 use crate::exec::{ExecEnvironment, EXECUTOR, NUM_THREADS};
 use bumpalo::boxed::Box as BumpBox;
 pub use history::{CopyHistory, DerefHistory};

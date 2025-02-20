@@ -29,6 +29,12 @@ enum StmtOrOp {
     Op(Op),
 }
 
+impl StmtOrOp {
+    fn is_op(&self) -> bool {
+        matches!(self, StmtOrOp::Op(_))
+    }
+}
+
 struct Op {
     activity: Option<Ident>,
     reads: HashMap<Ident, Path>,

@@ -425,7 +425,7 @@ fn result(idents: &Idents, when: TokenStream) -> TokenStream {
                 result: peregrine::reexports::tokio::sync::RwLock::new(None),
                 activity: &self,
                 relationships: peregrine::reexports::tokio::sync::Mutex::new(#op_relationships {
-                    parents: Vec::new(),
+                    parents: Vec::with_capacity(2),
                     #(#all_read_variables: <M::Timelines as peregrine::timeline::HasTimeline<#all_read_paths, M>>::find_child(timelines, when),)*
                 }),
                 time: when
