@@ -1,35 +1,12 @@
-use peregrine::{model, Resource};
-use peregrine::{CopyHistory, DerefHistory};
+use peregrine::{model, resource};
 
 mod activities;
 
 model! {
-    pub PotatoSat {
-        battery: Battery,
-        mode: Mode
-    }
+    pub PotatoSat(battery, mode)
 }
 
-#[derive(Debug)]
-enum Battery {}
-
-impl<'h> Resource<'h> for Battery {
-    const STATIC: bool = true;
-
-    type Read = f32;
-    type Write = f32;
-
-    type History = CopyHistory<'h, Self>;
-}
-
-#[derive(Debug)]
-enum Mode {}
-
-impl<'h> Resource<'h> for Mode {
-    const STATIC: bool = true;
-    type Read = &'h str;
-    type Write = String;
-    type History = DerefHistory<'h, Self>;
-}
+resource!(battery: f32);
+resource!(ref mode: String);
 
 fn main() {}

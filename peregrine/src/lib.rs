@@ -85,55 +85,24 @@
 //!
 //! ## Modelling quick-start
 //!
-//! First, you need resources to operate on. For each resource, you need a vacant type to act as a
-//! label:
+//! First, you need to declare resources to operate on. For that, use the [resource] macro.
 //!
 //! ```
 //! # fn main() {}
-//! /// Counts the number of sols that have elapsed.
-//! enum SolCounter {}
+//! # use peregrine::resource;
+//! resource!(sol_counter: u32);
+//! resource!(ref downlink_buffer: Vec<String>);
 //! ```
 //!
-//! We need the type to act as a label because we need to differentiate between resources that are
-//! represented with the same data type (which in this case will be `u32`). Next, implement the [Resource]
-//! trait for the label:
-//!
-//! ```
-//! # fn main() {}
-//! # use peregrine::Resource;
-//! # use peregrine::CopyHistory;
-//! enum SolCounter {}
-//!
-//! impl<'h> Resource<'h> for SolCounter {
-//!     const STATIC: bool = true;
-//!     type Read = u32;
-//!     type Write = u32;
-//!     type History = CopyHistory<'h, SolCounter>;
-//! }
-//! ```
-//!
-//! See the [Resource] trait for more details on what these types mean and how to implement it. Say
-//! our model has both the `SolCounter` resource and a `DownlinkBuffer` resource represented by a `Vec<String>`.
-//! We can make an activity that logs the current sol to the buffer:
+//! See the [resource] macro for more details on how to call it.
+//! Next, we can make an activity that logs the current sol to the buffer:
 //!
 //! ```
 //! # fn main() {}
 //! # use serde::{Serialize, Deserialize};
-//! # use peregrine::{impl_activity, Resource, CopyHistory, DerefHistory, Duration};
-//! # enum SolCounter {}
-//! # impl<'h> Resource<'h> for SolCounter {
-//! #     const STATIC: bool = true;
-//! #     type Read = u32;
-//! #     type Write = u32;
-//! #     type History = CopyHistory<'h, SolCounter>;
-//! # }
-//! # enum DownlinkBuffer {}
-//! # impl<'h> Resource<'h> for DownlinkBuffer {
-//! #     const STATIC: bool = true;
-//! #     type Read = &'h [String];
-//! #     type Write = Vec<String>;
-//! #     type History = DerefHistory<'h, DownlinkBuffer>;
-//! # }
+//! # use peregrine::{resource, impl_activity, Duration};
+//! # resource!(sol_counter: u32);
+//! # resource!(ref downlink_buffer: Vec<String>);
 //! #[derive(Serialize, Deserialize)]
 //! struct LogCurrentSol {
 //!     /// Verbosity is taken in as an activity argument.
@@ -142,14 +111,14 @@
 //!
 //! impl_activity! { for LogCurrentSol
 //!     // This is syntactic sugar to declare an operation.
-//!     // It occurs at time `start`, reads both `SolCounter` and `DownlinkBuffer`,
-//!     // and writes to `DownlinkBuffer`.
-//!     @(start) sol: SolCounter, buf: DownlinkBuffer -> buf {
+//!     // It occurs at time `start`, reads both `sol_counter` and `downlink_buffer`,
+//!     // and writes to `downlink_buffer`.
+//!     @(start) sol_counter, downlink_buffer -> downlink_buffer {
 //!         // Activity arguments are accessible under `args`, not `self`.
 //!         if args.verbose {
-//!             buf.push(format!("It is currently Sol {sol}"));
+//!             downlink_buffer.push(format!("It is currently Sol {sol_counter}"));
 //!         } else {
-//!             buf.push(format!("Sol {sol}"));
+//!             downlink_buffer.push(format!("Sol {sol_counter}"));
 //!         }
 //!     }
 //!     Duration::ZERO // Return statement indicates the activity had zero duration
@@ -160,32 +129,15 @@
 //!
 //! ```
 //! # fn main() {}
-//! # use serde::{Serialize, Deserialize};
-//! # use peregrine::{impl_activity, Resource, CopyHistory, DerefHistory, Duration, model};
-//! # enum SolCounter {}
-//! # impl<'h> Resource<'h> for SolCounter {
-//! #     const STATIC: bool = true;
-//! #     type Read = u32;
-//! #     type Write = u32;
-//! #     type History = CopyHistory<'h, SolCounter>;
-//! # }
-//! # enum DownlinkBuffer {}
-//! # impl<'h> Resource<'h> for DownlinkBuffer {
-//! #     const STATIC: bool = true;
-//! #     type Read = &'h [String];
-//! #     type Write = Vec<String>;
-//! #     type History = DerefHistory<'h, DownlinkBuffer>;
-//! # }
+//! # use peregrine::{resource, model};
+//! # resource!(sol_counter: u32);
+//! # resource!(ref downlink_buffer: Vec<String>);
 //! model! {
-//!     DemoModel {
-//!         sol: SolCounter,
-//!         log: DownlinkBuffer
-//!     }
+//!     DemoModel(sol_counter, downlink_buffer)
 //! }
 //! ```
 //!
-//! This implements the [Model] trait, and generates structs to store initial conditions, [Plans][Plan],
-//! and histories.
+//! This implements the [Model] trait, and generates structs to store initial conditions and plan contents.
 //!
 //! ## Interaction
 //!
@@ -255,7 +207,6 @@
 
 use crate::exec::{ExecEnvironment, EXECUTOR, NUM_THREADS};
 use bumpalo::boxed::Box as BumpBox;
-pub use history::{CopyHistory, DerefHistory};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -268,26 +219,14 @@ use std::ops::RangeBounds;
 ///
 /// ```
 /// # fn main() {}
-/// # use peregrine::{model, Resource, CopyHistory};
-/// # enum ResourceA {}
-/// # impl<'h> Resource<'h> for ResourceA {
-/// #     const STATIC: bool = true;
-/// #     type Read = u32;
-/// #     type Write = u32;
-/// #     type History = CopyHistory<'h, ResourceA>;
-/// # }
-/// # enum ResourceB {}
-/// # impl<'h> Resource<'h> for ResourceB {
-/// #     const STATIC: bool = true;
-/// #     type Read = u32;
-/// #     type Write = u32;
-/// #     type History = CopyHistory<'h, ResourceB>;
-/// # }
+/// # use peregrine::{resource, model};
+/// # resource!(res_a: u32);
+/// # resource!(res_b: u32);
 /// model! {
-///     MyModel {
-///         res_a: ResourceA,
-///         res_b: ResourceB
-///     }
+///     MyModel (
+///         res_a,
+///         res_b
+///     )
 /// }
 /// ```
 ///
@@ -309,23 +248,17 @@ pub use peregrine_macros::model;
 ///
 /// ```
 /// # fn main() {}
-/// # use peregrine::{impl_activity, Resource, CopyHistory, DerefHistory, Duration};
+/// # use peregrine::{resource, impl_activity, Duration};
 /// use serde::{Serialize, Deserialize};
 ///
-/// enum SolCounter {}
-/// impl<'h> Resource<'h> for SolCounter {
-///     const STATIC: bool = true;
-///     type Read = u32;
-///     type Write = u32;
-///     type History = CopyHistory<'h, SolCounter>;
-/// }
+/// resource!(sol_counter: u32);
 ///
 /// #[derive(Serialize, Deserialize)]
 /// struct IncrementSol;
 ///
 /// impl_activity! { for IncrementSol
-///     @(start) sol: SolCounter -> sol {
-///         sol += 1;
+///     @(start) sol_counter -> sol_counter {
+///         sol_counter += 1;
 ///     }
 ///     Duration::ZERO // Return statement indicates the activity had zero duration
 /// }
@@ -361,21 +294,18 @@ pub mod exec;
 pub mod history;
 pub mod operation;
 pub mod reexports;
+pub mod resource;
 pub mod timeline;
 
-use crate::operation::Operation;
 pub use exec::SyncBump;
 pub use hifitime::Duration;
 pub use hifitime::Epoch as Time;
-use history::HasHistory;
+pub use history::History;
+use history::HistoryAdapter;
+use operation::Operation;
 use timeline::HasTimeline;
 
 /// Marks a type as a resource label.
-///
-/// This trait is not applied to the actual data and is never instantiated, because multiple resources
-/// might have the same representation. (i.e. both memory usage and battery state are f32's.) To enforce
-/// that the resource type is only used as a label and never instantiated, it's recommended to make
-/// it an empty enum (i.e. a vacant type).
 ///
 /// Resources are not part of a model, the model is a selection of existing resources. This allows
 /// activities, which are also not part of a model, to be applied to any model that has the relevant
@@ -387,101 +317,20 @@ use timeline::HasTimeline;
 /// For simple [Copy] resources these two types will be the same, and you won't have to worry about it.
 /// For more complex resources they may be different but related types, like [String] and [&str][str].
 /// This is for performance reasons, to avoid unnecessary cloning of heap-allocated data.
-///
-/// The `Read` type is the input to an operation; it is what's read from history and from other operations.
-/// The `Write` type is the output of an operation, and the actual type written and stored in the history.
-/// Inside an operation, the type of the actual resource variable depends on how you use it.
-/// - read-only: `Read`
-/// - write-only: `Write`, initialized to the default value
-/// - read and write: `Write`, initialized from the converted value read from history (likely cloned).
-///
-/// ## Choosing a history container
-///
-/// Currently, there are two types of storage for history ([CopyHistory] and [DerefHistory]), and
-/// which you use depends on the properties of the type.
-///
-/// ### Copy
-///
-/// For a resource called `MyResource`, if the type written
-/// from operations is [Copiable][std::marker::Copy], then you should use `CopyHistory<MyResource>`.
-/// This requires that the `Read` and `Write` types are equal. For example:
-///
-/// ```
-/// # fn main() {}
-/// # use peregrine::Resource;
-/// # use peregrine::CopyHistory;
-/// enum SolCounter {}
-///
-/// impl<'h> Resource<'h> for SolCounter {
-///     const STATIC: bool = true;
-///     type Read = u32;
-///     type Write = u32;
-///     type History = CopyHistory<'h, SolCounter>;
-/// }
-/// ```
-///
-/// ### Deref
-///
-/// If the written type has a ["stable deref"][stable_deref_trait::StableDeref], meaning that it
-/// dereferences to data whose address doesn't change even if the data is moved, then you can use [DerefHistory].
-/// Common examples include [String], which dereferences to `str`; [`Vec<T>`], which derefs to `[T]`,
-/// and [`Box<T>`], which derefs to `T`. All three of these types use heap allocations; so if you have
-/// a [String], you can have an `&str` reference to its underlying data that remains valid even if
-/// the [String] is moved (using a bit of unsafe code in the [elsa crate](https://docs.rs/elsa/latest/elsa/)).
-///
-/// If this describes your type, you can use `DerefHistory<MyResource>`, which requires that `Read = &*Write`.
-/// (i.e. `Write = Vec<T>`, `Read = &[T]`, etc). For Example:
-///
-/// ```
-/// # fn main() {}
-/// # use peregrine::Resource;
-/// # use peregrine::DerefHistory;
-/// enum MissionPhase {}
-///
-/// impl<'h> Resource<'h> for MissionPhase {
-///     const STATIC: bool = true;
-///
-///     // Note the `'h` lifetime specifier. This means that the reference
-///     // lives as long as the history container itself.
-///     type Read = &'h str;
-///
-///     type Write = String;
-///     type History = DerefHistory<'h, MissionPhase>;
-/// }
-/// ```
-///
-/// ### Non-copy, non-deref types
-///
-/// If your type is neither copy nor stable-deref, currently the only option is to wrap it in a `Box`
-/// and use `DerefHistory`. I may implement a `CloneHistory` in the future.
-pub trait Resource<'h>: 'static + Sized {
+pub trait Resource<'h>: 'static + Sync {
     /// Whether the resource represents a value that can vary even when not actively written to by
-    /// an operation. This is used for cache invalidation,
-    /// so it is very important not to give false positives.
-    ///
-    /// The basic question is "does it matter
-    /// how long it has been since this resource was last written to?" For a boolean resource, the
-    /// answer is "no", and so it is static. But for a continuously-varying linear function,
-    /// the answer is "yes"; the value it represents changes over time even in between operations.
+    /// an operation. This is used for cache invalidation.
     const STATIC: bool;
 
     /// The type that is read from history.
     type Read: 'h + Copy + Send + Sync + Serialize;
 
     /// The type that is written from operations to history.
-    type Write: 'static
-        + From<Self::Read>
-        + Clone
-        + Default
-        + Debug
-        + Serialize
-        + DeserializeOwned
-        + Send
-        + Sync;
+    type Write: 'h + From<Self::Read> + Clone + Debug + Serialize + DeserializeOwned + Send + Sync;
 
     /// The type of history container to use to store instances of the `Write` type, currently
     /// either [CopyHistory] or [DerefHistory]. See [Resource] for details.
-    type History: HasHistory<'h, Self> + Default;
+    type History: 'static + HistoryAdapter<Self::Write, Self::Read> + Default + Send + Sync;
 }
 
 /// A plan session for iterative editing and simulating.
@@ -508,21 +357,15 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
     /// ```
     /// // Dummy resource and model; replace with a real model.
     /// use peregrine::exec::SyncBump;
-    /// use peregrine::{CopyHistory, Plan, Time};
-    /// enum MyResource {}
-    /// impl<'h> peregrine::Resource<'h> for MyResource {
-    ///     const STATIC: bool = true;
-    ///     type Read = ();
-    ///     type Write = ();
-    ///     type History = CopyHistory<'h, MyResource>;
-    /// }
-    /// peregrine::model! { MyModel { res: MyResource } }
+    /// use peregrine::{resource, model, Plan, Time};
+    /// resource!(my_resource: bool);
+    /// model! { MyModel (my_resource) }
     ///
     /// // Create a sync bump to be stored outside the plan.
     /// let bump = SyncBump::new();
     ///
     /// // Create a plan with the bump.
-    /// let plan = Plan::<MyModel>::new(&bump, Time::now().unwrap(), MyModelInitialConditions { res: () });
+    /// let plan = Plan::<MyModel>::new(&bump, Time::now().unwrap(), MyModelInitialConditions { my_resource: true });
     /// ```
     ///
     /// Rust's borrow checker will prevent you from moving or dropping `bump` before dropping the plan.
@@ -577,7 +420,7 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
     pub fn view<R: Resource<'o>>(
         &self,
         bounds: impl RangeBounds<Time>,
-        histories: &'o M::Histories,
+        histories: &'o History,
     ) -> Vec<(Time, R::Read)>
     where
         M::Timelines: HasTimeline<'o, R, M>,
@@ -637,8 +480,9 @@ impl<'o, M: Model<'o>> Drop for Plan<'o, M> {
 /// Autogenerated by the [model] macro.
 pub trait Model<'o>: Sync {
     type InitialConditions;
-    type Histories: 'o + Sync + Default;
     type Timelines: Sync + From<(Duration, &'o SyncBump, Self::InitialConditions)>;
+
+    fn init_history(history: &mut History);
 }
 
 /// An activity, which decomposes into a statically-known set of operations. Implemented
@@ -650,10 +494,6 @@ pub trait Activity<'o, M: Model<'o>>: Send + Sync {
         timelines: &M::Timelines,
         bump: &'o SyncBump,
     ) -> (Duration, Vec<&'o dyn Operation<'o, M>>);
-}
-
-pub trait ActivityRemover<'o, M: Model<'o>> {
-    fn remove(self, timelines: &mut M::Timelines);
 }
 
 /// A unique activity ID.

@@ -1,8 +1,8 @@
-use crate::model::{Model, ResourceSelection};
+use crate::model::Model;
 use proc_macro2::Ident;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{braced, Token, Visibility};
+use syn::{parenthesized, Path, Token, Visibility};
 
 impl Parse for Model {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -10,25 +10,14 @@ impl Parse for Model {
         let name: Ident = input.parse()?;
 
         let body;
-        braced!(body in input);
+        parenthesized!(body in input);
 
-        let resources =
-            Punctuated::<ResourceSelection, Token![,]>::parse_terminated(&body)?.into_iter();
+        let resources = Punctuated::<Path, Token![,]>::parse_terminated(&body)?.into_iter();
 
         Ok(Model {
             visibility,
             name,
             resources: resources.collect(),
-        })
-    }
-}
-
-impl Parse for ResourceSelection {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(ResourceSelection {
-            field: input.parse()?,
-            _colon: input.parse()?,
-            path: input.parse()?,
         })
     }
 }

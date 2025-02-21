@@ -1,110 +1,63 @@
+use crate::activity::Op;
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote};
-use std::collections::HashMap;
+use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use syn::{Block, Expr};
 
-pub(crate) fn process_operation(input: String) -> TokenStream {
-    let mut writes = HashMap::new();
-    let mut read_writes = HashMap::new();
+impl ToTokens for Op {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Op {
+            activity,
+            reads,
+            writes,
+            read_writes,
+            when,
+            body,
+        } = self;
 
-    let activity_start = input
-        .find("activity")
-        .expect("could not find activity label")
-        + 8;
-    let activity_end = input[activity_start..]
-        .find(';')
-        .expect("could not find activity end")
-        + activity_start;
+        let activity = activity.clone().expect("activity name was not set");
 
-    let activity = format_ident!("{}", input[activity_start..activity_end].trim());
+        let uuid = uuid::Uuid::new_v4().to_string().replace("-", "_");
+        let output = format_ident!("{activity}OpOutput_{uuid}");
+        let op = format_ident!("{activity}Op_{uuid}");
+        let op_relationships = format_ident!("{activity}OpRelationships_{uuid}");
 
-    let reads_start = input.find("reads").expect("could not find reads start") + 5;
-    let reads_end = input[reads_start..]
-        .find(';')
-        .expect("could not find reads end")
-        + reads_start;
+        let idents = Idents {
+            op_relationships,
+            op,
+            output,
+            activity,
+            read_onlys: reads.clone(),
+            write_onlys: writes.clone(),
+            read_writes: read_writes.clone(),
+            all_reads: reads.iter().chain(read_writes.iter()).cloned().collect(),
+            all_writes: writes.iter().chain(read_writes.iter()).cloned().collect(),
+            all_resources: reads
+                .iter()
+                .chain(writes.iter())
+                .chain(read_writes.iter())
+                .cloned()
+                .collect(),
+        };
+        let result = process_operation(idents, when, body);
+        tokens.append_all(result);
+    }
+}
 
-    let temp_reads = input[reads_start..reads_end]
-        .split(',')
-        .map(|s| {
-            let colon = s.find(':');
-            match colon {
-                None => panic!("no colon in read"),
-                Some(c) => {
-                    let name = format_ident!("{}", s[..c].trim());
-                    let path: TokenStream = s[c + 1..]
-                        .parse()
-                        .expect("could not parse read resource type path");
-                    (name, path)
-                }
-            }
-        })
-        .collect::<HashMap<_, _>>();
+struct Idents {
+    op_relationships: Ident,
+    op: Ident,
+    output: Ident,
+    activity: Ident,
+    read_onlys: Vec<Ident>,
+    write_onlys: Vec<Ident>,
+    read_writes: Vec<Ident>,
+    all_reads: Vec<Ident>,
+    all_writes: Vec<Ident>,
+    all_resources: Vec<Ident>,
+}
 
-    let writes_start = input.find("writes").expect("could not find writes start") + 6;
-    let writes_end = input[writes_start..]
-        .find(";")
-        .expect("could not find writes end")
-        + writes_start;
-
-    input[writes_start..writes_end].split(',').for_each(|s| {
-        let colon = s.find(':');
-        match colon {
-            None => {
-                let name = format_ident!("{}", s.trim());
-                match temp_reads.get(&name) {
-                    None => panic!("write variable doesn't have a resource type: {name}"),
-                    Some(path) => read_writes.insert(name, path.clone()),
-                };
-            }
-            Some(c) => {
-                let name = format_ident!("{}", s[..c].trim());
-                let path: TokenStream = s[c + 1..]
-                    .parse()
-                    .expect("could not parse write resource type path");
-                if temp_reads.contains_key(&name) {
-                    read_writes.insert(name, path);
-                } else {
-                    writes.insert(name, path);
-                }
-            }
-        }
-    });
-
-    let reads = temp_reads
-        .into_iter()
-        .filter(|(n, _)| !read_writes.contains_key(n))
-        .collect();
-
-    let uuid = uuid::Uuid::new_v4().to_string().replace("-", "_");
-    let output_ident = format_ident!("{activity}OpOutput_{uuid}");
-    let op = format_ident!("{activity}Op_{uuid}");
-    let op_relationships = format_ident!("{activity}OpRelationships_{uuid}");
-
-    let idents = Idents {
-        op_relationships,
-        op,
-        output: output_ident,
-        activity,
-        reads,
-        writes,
-        read_writes,
-    };
-
-    let when_start = input.find("when").expect("could not find when start") + 4;
-    let when_end = input[when_start..]
-        .find(';')
-        .expect("could not find when end")
-        + when_start;
-    let when: TokenStream = input[when_start..when_end]
-        .parse()
-        .expect("could not parse when clause");
-
-    let op_start = input.find("op").expect("could not find op start") + 2;
-    let operation_body: TokenStream = input[op_start..]
-        .to_string()
-        .parse()
-        .expect("could not parse op body");
-    let op = generate_operation(&idents, operation_body);
+fn process_operation(idents: Idents, when: &Expr, body: &Block) -> TokenStream {
+    let op = generate_operation(&idents, body);
 
     let output_struct = generate_output(&idents);
 
@@ -119,96 +72,56 @@ pub(crate) fn process_operation(input: String) -> TokenStream {
     }
 }
 
-struct Idents {
-    op_relationships: Ident,
-    op: Ident,
-    output: Ident,
-    activity: Ident,
-    reads: HashMap<Ident, TokenStream>,
-    writes: HashMap<Ident, TokenStream>,
-    read_writes: HashMap<Ident, TokenStream>,
-}
-
-fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
-    let (read_only_variables, read_only_paths) = idents.reads.iter().collect::<(Vec<_>, Vec<_>)>();
-    let (write_only_variables, write_only_paths) =
-        idents.writes.iter().collect::<(Vec<_>, Vec<_>)>();
-    let (read_write_variables, read_write_paths) =
-        idents.read_writes.iter().collect::<(Vec<_>, Vec<_>)>();
-
-    let all_paths = read_only_paths
-        .iter()
-        .chain(write_only_paths.iter())
-        .chain(read_write_paths.iter())
-        .collect::<Vec<_>>();
-
-    let all_read_variables = read_only_variables
-        .iter()
-        .chain(read_write_variables.iter())
-        .collect::<Vec<_>>();
-    let all_write_variables = write_only_variables
-        .iter()
-        .chain(read_write_variables.iter())
-        .collect::<Vec<_>>();
-
-    let all_read_paths = read_only_paths
-        .iter()
-        .chain(read_write_paths.iter())
-        .collect::<Vec<_>>();
-    let all_write_paths = write_only_paths
-        .iter()
-        .chain(read_write_paths.iter())
-        .collect::<Vec<_>>();
-
-    let first_write_variable = all_write_variables[0];
-    let all_but_one_write_variables = &all_write_variables[1..];
-
-    let first_write_path = all_write_paths[0];
-    let all_but_one_write_paths = &all_write_paths[1..];
-
-    let read_only_resource_hashes = read_only_variables
-        .iter()
-        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
-        .collect::<Vec<_>>();
-    let read_write_resource_hashes = read_write_variables
-        .iter()
-        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
-        .collect::<Vec<_>>();
-    let all_read_resource_hashes = all_read_variables
-        .iter()
-        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
-        .collect::<Vec<_>>();
-
+fn generate_operation(idents: &Idents, body: &Block) -> TokenStream {
     let Idents {
         op_relationships,
         op,
         output,
         activity,
-        ..
+        read_onlys,
+        write_onlys,
+        read_writes,
+        all_reads,
+        all_writes,
+        all_resources,
     } = idents;
+
+    let first_write = &all_writes[0];
+    let all_but_one_write = &all_writes[1..];
+
+    let read_only_resource_hashes = read_onlys
+        .iter()
+        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
+        .collect::<Vec<_>>();
+    let read_write_resource_hashes = read_writes
+        .iter()
+        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
+        .collect::<Vec<_>>();
+    let all_read_resource_hashes = all_reads
+        .iter()
+        .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
+        .collect::<Vec<_>>();
 
     let run_internal = quote! {
         let new_env = env.increment();
 
         let relationships = self.relationships.blocking_lock();
 
-        #(let (#read_only_resource_hashes, #read_only_variables) = relationships.#read_only_variables
-                .read(histories, new_env)
+        #(let (#read_only_resource_hashes, #read_onlys) = relationships.#read_onlys
+                .read(history, new_env)
                 .await;
         )*
 
         #(
-            let (#read_write_resource_hashes, mut #read_write_variables): (u64, <#read_write_paths as peregrine::Resource<'o>>::Write) = {
-                let (hash, #read_write_variables) = relationships.#read_write_variables
-                    .read(histories, new_env)
+            let (#read_write_resource_hashes, mut #read_writes): (u64, <#read_writes as peregrine::Resource<'o>>::Write) = {
+                let (hash, #read_writes) = relationships.#read_writes
+                    .read(history, new_env)
                     .await;
-                (hash, (*#read_write_variables).into())
+                (hash, (*#read_writes).into())
             };
         )*
 
         std::mem::drop(relationships);
-
-        #(let mut #write_only_variables = <#write_only_paths as peregrine::Resource<'o>>::Write::default();)*
 
         let hash = {
             use std::hash::{Hasher, BuildHasher, Hash};
@@ -221,36 +134,33 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
             state.finish()
         };
 
-        let (#(#all_write_variables),*) = if let Some(#first_write_variable) = <M::Histories as peregrine::history::HasHistory<#first_write_path>>::get(histories, hash) {
-            #(let #all_but_one_write_variables = <M::Histories as peregrine::history::HasHistory<#all_but_one_write_paths>>::get(histories, hash).unwrap();)*
-            (#(#all_write_variables),*)
+        let (#(#all_writes),*) = if let Some(#first_write) = history.get::<#first_write>(hash) {
+            #(let #all_but_one_write = history.get::<#all_but_one_write>(hash).unwrap();)*
+            (#(#all_writes),*)
         } else {
+            #(let mut #write_onlys: <#write_onlys as peregrine::Resource<'o>>::Write;)*
             let args = self.activity;
             { #body }
-            #(let #all_write_variables = <M::Histories as peregrine::history::HasHistory<#all_write_paths>>::insert(histories, hash, #all_write_variables);)*
-            (#(#all_write_variables),*)
+            #(let #all_writes = history.insert::<#all_writes>(hash, #all_writes);)*
+            (#(#all_writes),*)
         };
 
-        #(drop(#read_only_variables);)*
+        #(drop(#read_onlys);)*
 
         Some(#output {
             hash,
-            #(#all_write_variables,)*
+            #(#all_writes,)*
         })
     };
 
     let timelines_bound = quote! {
-        M::Timelines: #(peregrine::timeline::HasTimeline<'o, #all_paths, M>)+*
-    };
-
-    let history_bound = quote! {
-        M::Histories: #(peregrine::history::HasHistory<'o, #all_write_paths>)+*
+        M::Timelines: #(peregrine::timeline::HasTimeline<'o, #all_resources, M>)+*
     };
 
     quote! {
         struct #op_relationships<'o, M: peregrine::Model<'o>> {
             parents: Vec<&'o dyn peregrine::operation::Operation<'o, M>>,
-            #(#all_read_variables: &'o dyn peregrine::operation::Writer<'o, #all_read_paths, M>,)*
+            #(#all_reads: &'o dyn peregrine::operation::Writer<'o, #all_reads, M>,)*
 
         }
 
@@ -262,7 +172,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         }
 
         impl<'o, M: peregrine::Model<'o>> peregrine::operation::Operation<'o, M> for #op<'o, M>
-        where #timelines_bound, #history_bound {
+        where #timelines_bound {
             fn find_children(&'o self, time_of_change: peregrine::Duration, timelines: &M::Timelines) {
                 if time_of_change >= self.time { return; }
 
@@ -270,11 +180,11 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
                 let mut lock = self.relationships.blocking_lock();
                 #(
-                    let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_read_paths, M>>::find_child(timelines, self.time);
-                    if !std::ptr::eq(new_child, lock.#all_read_variables) {
-                        lock.#all_read_variables.remove_parent(self);
+                    let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_reads, M>>::find_child(timelines, self.time);
+                    if !std::ptr::eq(new_child, lock.#all_reads) {
+                        lock.#all_reads.remove_parent(self);
                         new_child.add_parent(self);
-                        lock.#all_read_variables = new_child;
+                        lock.#all_reads = new_child;
                         changed = true;
                     }
                 )*
@@ -300,19 +210,19 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
             fn insert_self(&'o self, timelines: &mut M::Timelines) {
                 #(
-                    let previous = <M::Timelines as peregrine::timeline::HasTimeline<#all_write_paths, M>>::insert_operation(timelines, self.time, self);
+                    let previous = <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::insert_operation(timelines, self.time, self);
                     previous.notify_parents(self.time, timelines);
                 )*
                 let lock = self.relationships.blocking_lock();
-                #(lock.#all_read_variables.add_parent(self);)*
+                #(lock.#all_reads.add_parent(self);)*
             }
             fn remove_self(&self, timelines: &mut M::Timelines) {
                 #(
-                    <M::Timelines as peregrine::timeline::HasTimeline<#all_write_paths, M>>::remove_operation(timelines, self.time);
+                    <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::remove_operation(timelines, self.time);
                 )*
                 self.notify_parents(self.time, timelines);
                 let lock = self.relationships.blocking_lock();
-                #(lock.#all_read_variables.remove_parent(self);)*
+                #(lock.#all_reads.remove_parent(self);)*
             }
 
             fn parents(&self) -> Vec<&'o dyn peregrine::operation::Operation<'o, M>> {
@@ -332,9 +242,9 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
         }
 
         #(
-            impl<'o, M: peregrine::Model<'o>> peregrine::operation::Writer<'o, #all_write_paths, M> for #op<'o, M>
-            where #timelines_bound, #history_bound {
-                fn read<'b>(&'o self, histories: &'o M::Histories, env: peregrine::exec::ExecEnvironment<'b>) -> peregrine::exec::BumpedFuture<'b, (u64, peregrine::reexports::tokio::sync::RwLockReadGuard<'o, <#all_write_paths as peregrine::Resource<'o>>::Read>)> where 'o: 'b {
+            impl<'o, M: peregrine::Model<'o>> peregrine::operation::Writer<'o, #all_writes, M> for #op<'o, M>
+            where #timelines_bound {
+                fn read<'b>(&'o self, history: &'o peregrine::History, env: peregrine::exec::ExecEnvironment<'b>) -> peregrine::exec::BumpedFuture<'b, (u64, peregrine::reexports::tokio::sync::RwLockReadGuard<'o, <#all_writes as peregrine::Resource<'o>>::Read>)> where 'o: 'b {
                     unsafe { std::pin::Pin::new_unchecked(env.bump.alloc(async move {
                         // If you (the thread) can get the write lock on the node, then you are responsible
                         // for calculating the hash and value if they aren't present.
@@ -361,7 +271,7 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 
                         (
                             read.as_ref().unwrap().hash,
-                            peregrine::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o.as_ref().unwrap().#all_write_variables)
+                            peregrine::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o.as_ref().unwrap().#all_writes)
                         )
                     }))}
                 }
@@ -371,19 +281,15 @@ fn generate_operation(idents: &Idents, body: TokenStream) -> TokenStream {
 }
 
 fn generate_output(idents: &Idents) -> TokenStream {
-    let (write_only_variables, write_only_paths) =
-        idents.writes.iter().collect::<(Vec<_>, Vec<_>)>();
-    let (read_write_variables, read_write_paths) =
-        idents.read_writes.iter().collect::<(Vec<_>, Vec<_>)>();
+    let Idents {
+        write_onlys,
+        read_writes,
+        ..
+    } = idents;
 
-    let all_write_variables = write_only_variables
+    let all_writes = write_onlys
         .iter()
-        .chain(read_write_variables.iter())
-        .collect::<Vec<_>>();
-
-    let all_write_paths = write_only_paths
-        .iter()
-        .chain(read_write_paths.iter())
+        .chain(read_writes.iter())
         .collect::<Vec<_>>();
 
     let Idents { output, .. } = idents;
@@ -391,30 +297,23 @@ fn generate_output(idents: &Idents) -> TokenStream {
         #[derive(Clone, Default)]
         struct #output<'h> {
             hash: u64,
-            #(#all_write_variables: <#all_write_paths as peregrine::Resource<'h>>::Read,)*
+            #(#all_writes: <#all_writes as peregrine::Resource<'h>>::Read,)*
         }
     }
 }
 
-fn result(idents: &Idents, when: TokenStream) -> TokenStream {
+fn result(idents: &Idents, when: &Expr) -> TokenStream {
     let Idents {
         op,
         op_relationships,
+        read_onlys,
+        read_writes,
         ..
     } = idents;
 
-    let (read_only_variables, read_only_paths) = idents.reads.iter().collect::<(Vec<_>, Vec<_>)>();
-    let (read_write_variables, read_write_paths) =
-        idents.read_writes.iter().collect::<(Vec<_>, Vec<_>)>();
-
-    let all_read_variables = read_only_variables
+    let all_reads = read_onlys
         .iter()
-        .chain(read_write_variables.iter())
-        .collect::<Vec<_>>();
-
-    let all_read_paths = read_only_paths
-        .iter()
-        .chain(read_write_paths.iter())
+        .chain(read_writes.iter())
         .collect::<Vec<_>>();
 
     quote! {
@@ -426,7 +325,7 @@ fn result(idents: &Idents, when: TokenStream) -> TokenStream {
                 activity: &self,
                 relationships: peregrine::reexports::tokio::sync::Mutex::new(#op_relationships {
                     parents: Vec::with_capacity(2),
-                    #(#all_read_variables: <M::Timelines as peregrine::timeline::HasTimeline<#all_read_paths, M>>::find_child(timelines, when),)*
+                    #(#all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(timelines, when),)*
                 }),
                 time: when
             });

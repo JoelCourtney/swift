@@ -1,10 +1,7 @@
-use std::collections::HashMap;
-
 use crate::activity::{Activity, Op, StmtOrOp};
 use proc_macro2::Ident;
 use syn::parse::{Parse, ParseStream};
-use syn::spanned::Spanned;
-use syn::{parenthesized, Block, Error, Expr, Path, Result, Stmt, Token};
+use syn::{parenthesized, Block, Error, Expr, Result, Stmt, Token};
 
 impl Parse for Activity {
     fn parse(input: ParseStream) -> Result<Self> {
@@ -38,30 +35,8 @@ impl Parse for StmtOrOp {
     }
 }
 
-fn check_paths<'a>(
-    iter: impl Iterator<Item = (&'a Ident, &'a Path)>,
-    variable: &Ident,
-    path: &Path,
-) -> Result<()> {
-    #[allow(clippy::manual_try_fold)]
-    iter.filter(|(v, p)| *p == path && *v != variable)
-        .fold(Ok(()), |acc, _| {
-            let new_error = Error::new(
-                variable.span().join(path.span()).unwrap(),
-                "Resource already declared, but with a different variable identifier.",
-            );
-            match acc {
-                Ok(_) => Err(new_error),
-                Err(mut e) => {
-                    e.combine(new_error);
-                    Err(e)
-                }
-            }
-        })
-}
-
 impl Parse for Op {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
+    fn parse(input: ParseStream) -> Result<Self> {
         <Token![@]>::parse(input)?;
 
         let when_buffer;
@@ -69,22 +44,20 @@ impl Parse for Op {
 
         let when: Expr = when_buffer.parse()?;
 
-        let mut reads_temp = HashMap::new();
-        let mut writes_temp = HashMap::new();
+        let mut reads_temp = vec![];
+        let mut writes_temp = vec![];
 
         loop {
             let variable: Ident = input.parse()?;
-            <Token![:]>::parse(input)?;
-            let path: Path = input.parse()?;
 
-            if reads_temp.contains_key(&variable) {
+            if reads_temp.contains(&variable) {
                 return Err(Error::new_spanned(
                     variable,
                     "Identifier declared as read multiple times.",
                 ));
             }
 
-            reads_temp.insert(variable, path);
+            reads_temp.push(variable);
 
             if input.peek(Token![,]) {
                 <Token![,]>::parse(input)?;
@@ -97,23 +70,14 @@ impl Parse for Op {
         loop {
             let variable: Ident = input.parse()?;
 
-            if writes_temp.contains_key(&variable) {
+            if writes_temp.contains(&variable) {
                 return Err(Error::new_spanned(
                     variable,
                     "Identifier declared as write multiple times.",
                 ));
             }
 
-            if input.peek(Token![:]) {
-                <Token![:]>::parse(input)?;
-                let path: Path = input.parse()?;
-                writes_temp.insert(variable, path);
-            } else {
-                match reads_temp.get(&variable) {
-                    Some(p) => { writes_temp.insert(variable, p.clone()); }
-                    None => return Err(Error::new_spanned(variable, "Write identifier declared without resource; same identifier was not found in reads list."))
-                }
-            }
+            writes_temp.push(variable);
 
             if input.peek(Token![,]) {
                 <Token![,]>::parse(input)?;
@@ -122,23 +86,21 @@ impl Parse for Op {
             }
         }
 
-        let mut reads = HashMap::new();
-        let mut writes = HashMap::new();
-        let mut read_writes = HashMap::new();
+        let mut reads = vec![];
+        let mut writes = vec![];
+        let mut read_writes = vec![];
 
-        for (v, p) in &reads_temp {
-            check_paths(reads_temp.iter().chain(writes_temp.iter()), v, p)?;
-            if writes_temp.contains_key(v) {
-                read_writes.insert(v.clone(), p.clone());
+        for v in &reads_temp {
+            if writes_temp.contains(v) {
+                read_writes.push(v.clone());
             } else {
-                reads.insert(v.clone(), p.clone());
+                reads.push(v.clone());
             }
         }
 
-        for (v, p) in &writes_temp {
-            check_paths(writes_temp.iter(), v, p)?;
-            if !reads_temp.contains_key(v) {
-                writes.insert(v.clone(), p.clone());
+        for v in writes_temp {
+            if !reads_temp.contains(&v) {
+                writes.push(v);
             }
         }
 

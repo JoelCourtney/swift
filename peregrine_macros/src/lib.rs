@@ -3,6 +3,7 @@ use syn::parse_macro_input;
 use crate::activity::{process_activity, Activity};
 use crate::model::{process_model, Model};
 use proc_macro::TokenStream;
+use quote::quote;
 
 mod activity;
 mod model;
@@ -18,4 +19,11 @@ pub fn model(input: TokenStream) -> TokenStream {
 pub fn impl_activity(input: TokenStream) -> TokenStream {
     let activity = parse_macro_input!(input as Activity);
     process_activity(activity).into()
+}
+
+#[proc_macro]
+pub fn code_to_str(input: TokenStream) -> TokenStream {
+    let string = input.to_string();
+    let trimmed = string.trim();
+    quote! { #trimmed }.into()
 }

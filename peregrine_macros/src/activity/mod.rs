@@ -1,7 +1,6 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::ToTokens;
-use std::collections::HashMap;
-use syn::{Block, Expr, Path, Stmt};
+use syn::{Block, Expr, Stmt};
 
 mod input;
 mod operation;
@@ -37,9 +36,9 @@ impl StmtOrOp {
 
 struct Op {
     activity: Option<Ident>,
-    reads: HashMap<Ident, Path>,
-    writes: HashMap<Ident, Path>,
-    read_writes: HashMap<Ident, Path>,
+    reads: Vec<Ident>,
+    writes: Vec<Ident>,
+    read_writes: Vec<Ident>,
     when: Expr,
     body: Block,
 }

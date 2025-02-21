@@ -1,36 +1,18 @@
 use peregrine::exec::SyncBump;
 use peregrine::reexports::hifitime::TimeScale;
-use peregrine::{impl_activity, model, Duration, Plan, Resource, Time};
-use peregrine::{CopyHistory, DerefHistory};
+use peregrine::{impl_activity, model, resource, Duration, Model, Plan, Time};
+use std::io::BufReader;
 
 model! {
-    pub Perf {
-        a: A,
-        b: B
-    }
+    pub Perf(a, b)
 }
 
-#[derive(Debug)]
-pub enum A {}
-impl<'h> Resource<'h> for A {
-    const STATIC: bool = true;
-    type Read = u32;
-    type Write = u32;
-    type History = CopyHistory<'h, A>;
-}
-
-#[derive(Debug)]
-pub enum B {}
-impl<'h> Resource<'h> for B {
-    const STATIC: bool = true;
-    type Read = &'h str;
-    type Write = String;
-    type History = DerefHistory<'h, B>;
-}
+resource!(a: u32);
+resource!(ref b: String);
 
 struct IncrementA;
 impl_activity! { for IncrementA
-    @(start) a: A -> a {
+    @(start) a -> a {
         a += 1;
     }
     Duration::ZERO
@@ -38,7 +20,7 @@ impl_activity! { for IncrementA
 
 struct ConvertAToB;
 impl_activity! { for ConvertAToB
-    @(start) a: A -> b: B {
+    @(start) a -> b {
         b = a.to_string()
     }
     Duration::ZERO
@@ -46,7 +28,7 @@ impl_activity! { for ConvertAToB
 
 struct ConvertBToA;
 impl_activity! { for ConvertBToA
-    @(start) b: B -> a: A {
+    @(start) b -> a {
         a = b.parse().unwrap();
     }
     Duration::ZERO
@@ -54,7 +36,12 @@ impl_activity! { for ConvertBToA
 
 fn main() {
     let bump = SyncBump::new();
-    let histories = PerfHistories::default();
+    let mut history = bincode::serde::decode_from_std_read(
+        &mut BufReader::new(std::fs::File::open("history.pere").unwrap()),
+        bincode::config::standard(),
+    )
+    .unwrap();
+    Perf::init_history(&mut history);
     let plan_start = Time::now().unwrap().to_time_scale(TimeScale::TAI);
     let mut plan = Plan::<Perf>::new(
         &bump,
@@ -78,8 +65,8 @@ fn main() {
 
     println!("built");
 
-    let start = plan_start + Duration::from_seconds(30_000_000.0 - 10.0);
-    let result = plan.view::<B>(start..start + Duration::from_seconds(10.0), &histories);
+    let start = plan_start + Duration::from_seconds(15_000_000.0 - 10.0);
+    let result = plan.view::<b>(start..start + Duration::from_seconds(10.0), &history);
 
     dbg!(result);
 }
