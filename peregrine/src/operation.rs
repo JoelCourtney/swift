@@ -2,9 +2,14 @@
 
 use crate::exec::{BumpedFuture, ExecEnvironment};
 use crate::history::{History, PeregrineDefaultHashBuilder};
+use crate::resource::Resource;
 use crate::timeline::HasTimeline;
-use crate::{Model, Resource};
+use crate::Model;
+use anyhow::{anyhow, Result};
+use derive_more::with_trait::Error as DeriveError;
+use derive_more::Display;
 use hifitime::Duration;
+use std::fmt::Debug;
 use std::hash::BuildHasher;
 use std::pin::Pin;
 use std::sync::Mutex;
@@ -28,10 +33,21 @@ pub trait Writer<'o, R: Resource<'o>, M: Model<'o>>: Operation<'o, M> {
         &'o self,
         histories: &'o History,
         env: ExecEnvironment<'b>,
-    ) -> BumpedFuture<'b, (u64, RwLockReadGuard<'o, <R as Resource<'o>>::Read>)>
+    ) -> BumpedFuture<'b, Result<(u64, RwLockReadGuard<'o, <R as Resource<'o>>::Read>)>>
     where
         'o: 'b;
 }
+
+/// An internal marker error to signify that a node attempted to read
+/// from an upstream node that had already computed an error.
+///
+/// This is to avoid duplicating the same error many times across all
+/// branches of the graph. Instead, the true error is only returned once,
+/// by the original task that computed it,
+/// and all subsequent reads return this struct, which is filtered out
+/// by `plan.view`.
+#[derive(Copy, Clone, Debug, Default, Display, DeriveError)]
+pub struct ObservedErrorOutput;
 
 pub struct InitialConditionOpInner<'o, R: Resource<'o>> {
     value: <R as Resource<'o>>::Write,
@@ -111,7 +127,7 @@ where
         &'o self,
         histories: &'o History,
         env: ExecEnvironment<'b>,
-    ) -> BumpedFuture<'b, (u64, RwLockReadGuard<'o, <R as Resource<'o>>::Read>)>
+    ) -> BumpedFuture<'b, Result<(u64, RwLockReadGuard<'o, <R as Resource<'o>>::Read>)>>
     where
         'o: 'b,
     {
@@ -123,8 +139,7 @@ where
                             bincode::serde::encode_to_vec(
                                 &write_guard.value,
                                 bincode::config::standard(),
-                            )
-                            .unwrap(),
+                            )?,
                         );
                         if let Some(r) = histories.get::<R>(hash) {
                             write_guard.result = Some((hash, r));
@@ -139,11 +154,14 @@ where
                 } else {
                     self.lock.read().await
                 };
-                let hash = read_guard.result.unwrap().0;
-                (
+                let hash = read_guard
+                    .result
+                    .ok_or(anyhow!("initial condition result not written"))?
+                    .0;
+                Ok((
                     hash,
                     RwLockReadGuard::map(read_guard, |o| &o.result.as_ref().unwrap().1),
-                )
+                ))
             }))
         }
     }

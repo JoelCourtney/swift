@@ -32,6 +32,12 @@ impl StmtOrOp {
     fn is_op(&self) -> bool {
         matches!(self, StmtOrOp::Op(_))
     }
+    fn get_op(&self) -> Option<&Op> {
+        match self {
+            StmtOrOp::Stmt(_) => None,
+            StmtOrOp::Op(o) => Some(o),
+        }
+    }
 }
 
 struct Op {
@@ -41,4 +47,5 @@ struct Op {
     read_writes: Vec<Ident>,
     when: Expr,
     body: Block,
+    uuid: String,
 }

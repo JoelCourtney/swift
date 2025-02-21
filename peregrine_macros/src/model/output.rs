@@ -45,7 +45,7 @@ impl ToTokens for Model {
             }
 
             #visibility struct #initial_conditions_struct_name<'h> {
-                #(#resource_idents: <#resources as peregrine::Resource<'h>>::Write,)*
+                #(#resource_idents: <#resources as peregrine::resource::Resource<'h>>::Write,)*
             }
 
             #visibility struct #timelines_struct_name<'o> {

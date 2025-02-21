@@ -29,14 +29,24 @@ impl ToTokens for Activity {
 
         let num_operations = lines.iter().filter(|l| l.is_op()).count();
 
+        let op_functions = lines
+            .iter()
+            .filter_map(|l| l.get_op())
+            .map(|o| o.body_function())
+            .collect::<Vec<_>>();
+
         let result = quote! {
             impl<'o, M: peregrine::Model<'o> + 'o> peregrine::Activity<'o, M> for #name
             where #timelines_bound {
-                fn decompose(&'o self, start: peregrine::Time, timelines: &M::Timelines, bump: &'o peregrine::exec::SyncBump) -> (peregrine::Duration, Vec<&'o dyn peregrine::operation::Operation<'o, M>>) {
+                fn decompose(&'o self, start: peregrine::Time, timelines: &M::Timelines, bump: &'o peregrine::exec::SyncBump) -> peregrine::Result<(peregrine::Duration, Vec<&'o dyn peregrine::operation::Operation<'o, M>>)> {
                     let mut operations: Vec<&'o dyn peregrine::operation::Operation<'o, M>> = Vec::with_capacity(#num_operations);
                     let duration = { #(#lines)* };
-                    (duration, operations)
+                    Ok((duration, operations))
                 }
+            }
+
+            impl #name {
+                #(#op_functions)*
             }
         };
 

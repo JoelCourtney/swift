@@ -2,8 +2,8 @@
 
 use std::hash::{BuildHasher, Hasher};
 
+use crate::resource::Resource;
 use crate::resource::ResourceHistoryPlugin;
-use crate::Resource;
 use dashmap::DashMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use stable_deref_trait::StableDeref;

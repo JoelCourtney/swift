@@ -114,8 +114,7 @@
 //!     // It occurs at time `start`, reads both `sol_counter` and `downlink_buffer`,
 //!     // and writes to `downlink_buffer`.
 //!     @(start) sol_counter, downlink_buffer -> downlink_buffer {
-//!         // Activity arguments are accessible under `args`, not `self`.
-//!         if args.verbose {
+//!         if self.verbose {
 //!             downlink_buffer.push(format!("It is currently Sol {sol_counter}"));
 //!         } else {
 //!             downlink_buffer.push(format!("Sol {sol_counter}"));
@@ -207,10 +206,8 @@
 
 use crate::exec::{ExecEnvironment, EXECUTOR, NUM_THREADS};
 use bumpalo::boxed::Box as BumpBox;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::ops::RangeBounds;
 
 /// Creates a model and associated structs from a selection of resources.
@@ -297,41 +294,15 @@ pub mod reexports;
 pub mod resource;
 pub mod timeline;
 
+use crate::operation::ObservedErrorOutput;
+pub use anyhow::{anyhow, bail, Error, Result};
 pub use exec::SyncBump;
 pub use hifitime::Duration;
 pub use hifitime::Epoch as Time;
 pub use history::History;
-use history::HistoryAdapter;
 use operation::Operation;
+use resource::Resource;
 use timeline::HasTimeline;
-
-/// Marks a type as a resource label.
-///
-/// Resources are not part of a model, the model is a selection of existing resources. This allows
-/// activities, which are also not part of a model, to be applied to any model that has the relevant
-/// resources.
-///
-/// ## Reading & Writing
-///
-/// Resources are not represented one data type, but two, one for reading and one for writing.
-/// For simple [Copy] resources these two types will be the same, and you won't have to worry about it.
-/// For more complex resources they may be different but related types, like [String] and [&str][str].
-/// This is for performance reasons, to avoid unnecessary cloning of heap-allocated data.
-pub trait Resource<'h>: 'static + Sync {
-    /// Whether the resource represents a value that can vary even when not actively written to by
-    /// an operation. This is used for cache invalidation.
-    const STATIC: bool;
-
-    /// The type that is read from history.
-    type Read: 'h + Copy + Send + Sync + Serialize;
-
-    /// The type that is written from operations to history.
-    type Write: 'h + From<Self::Read> + Clone + Debug + Serialize + DeserializeOwned + Send + Sync;
-
-    /// The type of history container to use to store instances of the `Write` type, currently
-    /// either [CopyHistory] or [DerefHistory]. See [Resource] for details.
-    type History: 'static + HistoryAdapter<Self::Write, Self::Read> + Default + Send + Sync;
-}
 
 /// A plan session for iterative editing and simulating.
 pub struct Plan<'o, M: Model<'o>> {
@@ -379,12 +350,16 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
     }
 
     /// Inserts a new activity into the plan, and returns its unique ID.
-    pub fn insert(&mut self, time: Time, activity: impl Activity<'o, M> + 'static) -> ActivityId {
+    pub fn insert(
+        &mut self,
+        time: Time,
+        activity: impl Activity<'o, M> + 'static,
+    ) -> Result<ActivityId> {
         let id = ActivityId::new(self.id_counter);
         self.id_counter += 1;
         let activity = self.bump.alloc(activity);
         let activity_pointer = activity as *mut dyn Activity<'o, M>;
-        let (_duration, operations) = activity.decompose(time, &self.timelines, self.bump);
+        let (_duration, operations) = activity.decompose(time, &self.timelines, self.bump)?;
 
         for op in &operations {
             op.insert_self(&mut self.timelines);
@@ -398,16 +373,21 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
             },
         );
 
-        id
+        Ok(id)
     }
 
     /// Removes an activity from the plan, by ID.
-    pub fn remove(&mut self, id: ActivityId) {
-        let decomposed = self.activities.remove(&id).unwrap();
+    pub fn remove(&mut self, id: ActivityId) -> Result<()> {
+        let decomposed = self
+            .activities
+            .remove(&id)
+            .ok_or(anyhow!(format!("could not find activity with id {id:?}")))?;
         for op in decomposed.operations {
             op.remove_self(&mut self.timelines);
         }
         drop(unsafe { BumpBox::from_raw(decomposed.activity) });
+
+        Ok(())
     }
 
     /// Returns a view into a section of a resource's timeline. After creating a plan, call
@@ -421,7 +401,7 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
         &self,
         bounds: impl RangeBounds<Time>,
         histories: &'o History,
-    ) -> Vec<(Time, R::Read)>
+    ) -> Result<Vec<(Time, R::Read)>>
     where
         M::Timelines: HasTimeline<'o, R, M>,
     {
@@ -436,7 +416,7 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
             ))
             .into_iter();
         let env = ExecEnvironment::new(&bump);
-        std::thread::scope(move |scope| {
+        let results = std::thread::scope(move |scope| {
             // EXPLANATION:
             // The async executor crate provides an `executor.run(fut)` function,
             // that runs the executor until `fut` completes. Importantly, if `fut` yields,
@@ -456,12 +436,19 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
             }
 
             futures::executor::block_on(futures::future::join_all(nodes.map(|(t, n)| async move {
-                (
+                Ok((
                     timeline::duration_to_epoch(t),
-                    *n.read(histories, env).await.1,
-                )
+                    *n.read(histories, env).await?.1,
+                ))
             })))
-        })
+        });
+        results
+            .into_iter()
+            .filter(|r: &Result<_>| match r {
+                Ok(_) => true,
+                Err(e) => e.downcast_ref::<ObservedErrorOutput>().is_none(),
+            })
+            .collect::<Result<Vec<_>>>()
     }
 }
 
@@ -493,11 +480,11 @@ pub trait Activity<'o, M: Model<'o>>: Send + Sync {
         start: Time,
         timelines: &M::Timelines,
         bump: &'o SyncBump,
-    ) -> (Duration, Vec<&'o dyn Operation<'o, M>>);
+    ) -> Result<(Duration, Vec<&'o dyn Operation<'o, M>>)>;
 }
 
 /// A unique activity ID.
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Debug)]
 pub struct ActivityId(u32);
 impl ActivityId {
     pub fn new(id: u32) -> ActivityId {

@@ -59,4 +59,8 @@ hifitime = "4.0.2"
 
 ## MISC
 # Used for convience, not having to manually implement simple traits.
-derive_more = { version = "2.0.1", features = ["deref", "deref_mut"] }
+derive_more = { version = "2.0.1", features = ["deref", "deref_mut", "display", "error"] }
+
+## ERROR HANDLING
+# Used to allow modellers to return errors from activities and operations
+anyhow = "1.0.96"
