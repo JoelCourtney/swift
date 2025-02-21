@@ -1,12 +1,13 @@
 #![doc(hidden)]
 
-use std::hash::{BuildHasher, Hasher};
-
 use crate::resource::Resource;
 use crate::resource::ResourceHistoryPlugin;
 use dashmap::DashMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use stable_deref_trait::StableDeref;
+use std::hash::{BuildHasher, Hasher};
+use std::mem::swap;
+use tokio::sync::RwLock;
 use type_map::concurrent::TypeMap;
 use type_reg::untagged::TypeReg;
 
@@ -14,23 +15,35 @@ pub type PeregrineDefaultHashBuilder = foldhash::fast::FixedState;
 
 #[derive(Default)]
 #[repr(transparent)]
-pub struct History(TypeMap);
+pub struct History(RwLock<TypeMap>);
 
 impl History {
-    pub fn init<'h, R: Resource<'h>>(&mut self) {
-        self.0.insert(R::History::default());
+    pub fn init<'h, R: Resource<'h>>(&self) {
+        self.0.blocking_write().insert(R::History::default());
     }
     pub fn insert<'h, R: Resource<'h>>(&'h self, hash: u64, value: R::Write) -> R::Read {
-        self.0.get::<R::History>().unwrap().insert(hash, value)
+        self.0
+            .blocking_read()
+            .get::<R::History>()
+            .unwrap()
+            .insert(hash, value)
     }
     pub fn get<'h, R: Resource<'h>>(&'h self, hash: u64) -> Option<R::Read> {
-        self.0.get::<R::History>().and_then(|h| h.get(hash))
+        self.0
+            .blocking_read()
+            .get::<R::History>()
+            .and_then(|h| h.get(hash))
     }
-    pub fn get_sub_history<T: 'static>(&self) -> Option<&T> {
-        self.0.get()
+    pub fn take_inner(&self) -> TypeMap {
+        let mut replacement = TypeMap::new();
+        swap(&mut *self.0.blocking_write(), &mut replacement);
+        replacement
     }
-    pub fn insert_sub_history<T: 'static + Send + Sync>(&mut self, history: T) {
-        self.0.insert(history);
+}
+
+impl From<TypeMap> for History {
+    fn from(value: TypeMap) -> Self {
+        History(RwLock::new(value))
     }
 }
 
@@ -137,9 +150,11 @@ impl Serialize for History {
     {
         let mut ser_type_map = type_reg::untagged::TypeMap::<String>::new();
 
+        let mut taken = self.take_inner();
+
         for plugin in inventory::iter::<&'static dyn ResourceHistoryPlugin> {
             if !ser_type_map.contains_key(&plugin.write_type_string()) {
-                plugin.ser(self, &mut ser_type_map)
+                plugin.ser(&mut taken, &mut ser_type_map)
             }
         }
 
@@ -160,12 +175,12 @@ impl<'de> Deserialize<'de> for History {
 
         let mut de_type_map = type_reg.deserialize_map(deserializer)?;
 
-        let mut history = History::default();
+        let mut result = TypeMap::new();
 
         for plugin in inventory::iter::<&'static dyn ResourceHistoryPlugin> {
-            plugin.de(&mut history, &mut de_type_map);
+            plugin.de(&mut result, &mut de_type_map);
         }
 
-        Ok(history)
+        Ok(result.into())
     }
 }

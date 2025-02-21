@@ -8,4 +8,5 @@ pub use inventory;
 pub use peregrine_macros;
 pub use serde;
 pub use tokio;
+pub use type_map;
 pub use type_reg;

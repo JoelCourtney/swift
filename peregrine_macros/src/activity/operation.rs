@@ -193,7 +193,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
 
                 let mut lock = self.relationships.blocking_lock();
                 #(
-                    let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_reads, M>>::find_child(timelines, self.time);
+                    let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_reads, M>>::find_child(timelines, self.time).expect("unreachable; could not find a child that was previously there.");
                     if !std::ptr::eq(new_child, lock.#all_reads) {
                         lock.#all_reads.remove_parent(self);
                         new_child.add_parent(self);
@@ -221,21 +221,27 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                 self.relationships.blocking_lock().parents.retain(|p| !std::ptr::eq(*p, parent));
             }
 
-            fn insert_self(&'o self, timelines: &mut M::Timelines) {
+            fn insert_self(&'o self, timelines: &mut M::Timelines) -> peregrine::Result<()> {
                 #(
-                    let previous = <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::insert_operation(timelines, self.time, self);
+                    let previous = <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::insert_operation(timelines, self.time, self)
+                        .ok_or(peregrine::anyhow!("Could not find an upstream node. Did you insert before the initial conditions?"))?;
                     previous.notify_parents(self.time, timelines);
                 )*
                 let lock = self.relationships.blocking_lock();
                 #(lock.#all_reads.add_parent(self);)*
+                Ok(())
             }
-            fn remove_self(&self, timelines: &mut M::Timelines) {
+            fn remove_self(&self, timelines: &mut M::Timelines) -> peregrine::Result<()> {
                 #(
-                    <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::remove_operation(timelines, self.time);
+                    let this = <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::remove_operation(timelines, self.time);
+                    if this.is_none() {
+                        peregrine::bail!("Removal failed; could not find self at the expected time.")
+                    }
                 )*
                 self.notify_parents(self.time, timelines);
                 let lock = self.relationships.blocking_lock();
                 #(lock.#all_reads.remove_parent(self);)*
+                Ok(())
             }
 
             fn parents(&self) -> Vec<&'o dyn peregrine::operation::Operation<'o, M>> {
@@ -344,7 +350,7 @@ fn result(idents: &Idents, when: &Expr) -> TokenStream {
                 activity: &self,
                 relationships: peregrine::reexports::tokio::sync::Mutex::new(#op_relationships {
                     parents: Vec::with_capacity(2),
-                    #(#all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(timelines, when),)*
+                    #(#all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(timelines, when).ok_or(peregrine::anyhow!("Could not find upstream node. Did you insert before the initial conditions?"))?,)*
                 }),
                 time: when
             });

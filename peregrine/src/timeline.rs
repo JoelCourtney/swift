@@ -9,13 +9,13 @@ use std::collections::BTreeMap;
 use std::ops::RangeBounds;
 
 pub trait HasTimeline<'o, R: Resource<'o>, M: Model<'o>> {
-    fn find_child(&self, time: Duration) -> &'o dyn Writer<'o, R, M>;
+    fn find_child(&self, time: Duration) -> Option<&'o dyn Writer<'o, R, M>>;
     fn insert_operation(
         &mut self,
         time: Duration,
         op: &'o dyn Writer<'o, R, M>,
-    ) -> &'o dyn Writer<'o, R, M>;
-    fn remove_operation(&mut self, time: Duration);
+    ) -> Option<&'o dyn Writer<'o, R, M>>;
+    fn remove_operation(&mut self, time: Duration) -> Option<&'o dyn Writer<'o, R, M>>;
 
     fn get_operations(
         &self,
@@ -49,27 +49,20 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Timeline<'o, R, M>
 where
     M::Timelines: HasTimeline<'o, R, M>,
 {
-    pub fn init(
-        time: Duration,
-        initial_condition: &'o (dyn Writer<'o, R, M>),
-    ) -> Timeline<'o, R, M> {
+    pub fn init(time: Duration, initial_condition: &'o dyn Writer<'o, R, M>) -> Timeline<'o, R, M> {
         Timeline(BTreeMap::from([(time, initial_condition)]))
     }
 
-    pub fn last(&self) -> (Duration, &'o (dyn Writer<'o, R, M>)) {
-        let tup = self.0.last_key_value().unwrap();
-        (*tup.0, *tup.1)
+    pub fn last(&self) -> Option<(Duration, &'o dyn Writer<'o, R, M>)> {
+        self.0.last_key_value().map(|(t, w)| (*t, *w))
     }
 
-    pub fn last_before(&self, time: Duration) -> (Duration, &'o (dyn Writer<'o, R, M>)) {
-        let tup = self.0.range(..time).next_back().unwrap_or_else(|| {
-            panic!("No writers found before {time}. Did you insert before the initial conditions?")
-        });
-        (*tup.0, *tup.1)
+    pub fn last_before(&self, time: Duration) -> Option<(Duration, &'o dyn Writer<'o, R, M>)> {
+        self.0.range(..time).next_back().map(|(t, w)| (*t, *w))
     }
 
-    pub fn first_after(&self, time: Duration) -> Option<(Duration, &'o (dyn Writer<'o, R, M>))> {
-        self.0.range(time..).next().map(move |t| (*t.0, *t.1))
+    pub fn first_after(&self, time: Duration) -> Option<(Duration, &'o dyn Writer<'o, R, M>)> {
+        self.0.range(time..).next().map(move |(t, w)| (*t, *w))
     }
 
     #[cfg(not(feature = "nightly"))]
@@ -77,17 +70,17 @@ where
         &mut self,
         time: Duration,
         value: &'o (dyn Writer<'o, R, M>),
-    ) -> &'o (dyn Writer<'o, R, M>) {
+    ) -> Option<&'o (dyn Writer<'o, R, M>)> {
         self.0.insert(time, value);
-        self.last_before(time).1
+        self.last_before(time).map(|(_, w)| w)
     }
 
     #[cfg(feature = "nightly")]
     pub fn insert(
         &mut self,
         time: Duration,
-        value: &'o (dyn Writer<'o, R, M>),
-    ) -> &'o (dyn Writer<'o, R, M>) {
+        value: &'o dyn Writer<'o, R, M>,
+    ) -> Option<&'o dyn Writer<'o, R, M>> {
         let mut cursor_mut = self.0.upper_bound_mut(std::ops::Bound::Unbounded);
         if let Some((t, _)) = cursor_mut.peek_prev() {
             if *t < time {
@@ -96,11 +89,11 @@ where
             }
         }
         self.0.insert(time, value);
-        self.last_before(time).1
+        self.last_before(time).map(|(_, w)| w)
     }
 
-    pub fn remove(&mut self, time: Duration) {
-        self.0.remove(&time);
+    pub fn remove(&mut self, time: Duration) -> Option<&'o (dyn Writer<'o, R, M>)> {
+        self.0.remove(&time)
     }
 
     pub fn range<'a>(

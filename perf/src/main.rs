@@ -1,6 +1,5 @@
-use peregrine::exec::SyncBump;
 use peregrine::reexports::hifitime::TimeScale;
-use peregrine::{impl_activity, model, resource, Duration, History, Model, Plan, Time};
+use peregrine::{impl_activity, model, resource, Duration, Session, Time};
 
 model! {
     pub Perf(a, b)
@@ -28,18 +27,16 @@ impl_activity! { for ConvertAToB
 struct ConvertBToA;
 impl_activity! { for ConvertBToA
     @(start) b -> a {
-        a = b.parse().unwrap();
+        a = b.parse()?;
     }
     Duration::ZERO
 }
 
 fn main() -> peregrine::Result<()> {
-    let bump = SyncBump::new();
-    let mut history = History::default();
-    Perf::init_history(&mut history);
-    let plan_start = Time::now().unwrap().to_time_scale(TimeScale::TAI);
-    let mut plan = Plan::<Perf>::new(
-        &bump,
+    let session = Session::new();
+
+    let plan_start = Time::now()?.to_time_scale(TimeScale::TAI);
+    let mut plan = session.new_plan::<Perf>(
         plan_start,
         PerfInitialConditions {
             a: 0,
@@ -61,7 +58,7 @@ fn main() -> peregrine::Result<()> {
     println!("built");
 
     let start = plan_start + Duration::from_seconds(30_000_000.0 - 10.0);
-    let result = plan.view::<b>(start..start + Duration::from_seconds(10.0), &history)?;
+    let result = plan.view::<b>(start..start + Duration::from_seconds(10.0))?;
 
     dbg!(result);
 

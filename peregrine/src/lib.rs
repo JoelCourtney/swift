@@ -204,7 +204,7 @@
 
 #![cfg_attr(feature = "nightly", feature(btree_cursors))]
 
-use crate::exec::{ExecEnvironment, EXECUTOR, NUM_THREADS};
+use crate::exec::{ExecEnvironment, SyncBump, EXECUTOR, NUM_THREADS};
 use bumpalo::boxed::Box as BumpBox;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -294,22 +294,46 @@ pub mod reexports;
 pub mod resource;
 pub mod timeline;
 
+pub use crate::history::History;
 use crate::operation::ObservedErrorOutput;
 pub use anyhow::{anyhow, bail, Error, Result};
-pub use exec::SyncBump;
 pub use hifitime::Duration;
 pub use hifitime::Epoch as Time;
-pub use history::History;
 use operation::Operation;
 use resource::Resource;
 use timeline::HasTimeline;
 
+#[derive(Default)]
+pub struct Session {
+    bump: SyncBump,
+    history: History,
+}
+
+impl Session {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn new_plan<'o, M: Model<'o>>(
+        &'o self,
+        time: Time,
+        initial_conditions: M::InitialConditions,
+    ) -> Plan<'o, M>
+    where
+        Self: 'o,
+    {
+        M::init_history(&self.history);
+        Plan::new(self, time, initial_conditions)
+    }
+}
+
 /// A plan session for iterative editing and simulating.
 pub struct Plan<'o, M: Model<'o>> {
     activities: HashMap<ActivityId, DecomposedActivity<'o, M>>,
-    bump: &'o SyncBump,
     id_counter: u32,
     timelines: M::Timelines,
+
+    session: &'o Session,
 }
 
 struct DecomposedActivity<'o, M> {
@@ -318,34 +342,19 @@ struct DecomposedActivity<'o, M> {
 }
 
 impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
-    /// Create a new empty plan from initial conditions.
-    ///
-    /// This function requires an instance of [SyncBump]. This is an arena allocator used to satisfy
-    /// rust's borrowing rules without unsafe code or smart pointers. This is an unfortunate implementation detail
-    /// as a result of Rust's borrow checker that makes it impossible to generate this object inside
-    /// the `new` method. Just do this:
-    ///
-    /// ```
-    /// // Dummy resource and model; replace with a real model.
-    /// use peregrine::exec::SyncBump;
-    /// use peregrine::{resource, model, Plan, Time};
-    /// resource!(my_resource: bool);
-    /// model! { MyModel (my_resource) }
-    ///
-    /// // Create a sync bump to be stored outside the plan.
-    /// let bump = SyncBump::new();
-    ///
-    /// // Create a plan with the bump.
-    /// let plan = Plan::<MyModel>::new(&bump, Time::now().unwrap(), MyModelInitialConditions { my_resource: true });
-    /// ```
-    ///
-    /// Rust's borrow checker will prevent you from moving or dropping `bump` before dropping the plan.
-    pub fn new(bump: &'o SyncBump, time: Time, initial_conditions: M::InitialConditions) -> Self {
+    /// Create a new empty plan from initial conditions and a session.
+    fn new(session: &'o Session, time: Time, initial_conditions: M::InitialConditions) -> Self {
         Plan {
             activities: HashMap::new(),
-            bump,
-            timelines: (timeline::epoch_to_duration(time), bump, initial_conditions).into(),
+            timelines: (
+                timeline::epoch_to_duration(time),
+                &session.bump,
+                initial_conditions,
+            )
+                .into(),
             id_counter: 0,
+
+            session,
         }
     }
 
@@ -357,12 +366,13 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
     ) -> Result<ActivityId> {
         let id = ActivityId::new(self.id_counter);
         self.id_counter += 1;
-        let activity = self.bump.alloc(activity);
+        let activity = self.session.bump.alloc(activity);
         let activity_pointer = activity as *mut dyn Activity<'o, M>;
-        let (_duration, operations) = activity.decompose(time, &self.timelines, self.bump)?;
+        let (_duration, operations) =
+            activity.decompose(time, &self.timelines, &self.session.bump)?;
 
         for op in &operations {
-            op.insert_self(&mut self.timelines);
+            op.insert_self(&mut self.timelines)?;
         }
 
         self.activities.insert(
@@ -383,7 +393,7 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
             .remove(&id)
             .ok_or(anyhow!(format!("could not find activity with id {id:?}")))?;
         for op in decomposed.operations {
-            op.remove_self(&mut self.timelines);
+            op.remove_self(&mut self.timelines)?;
         }
         drop(unsafe { BumpBox::from_raw(decomposed.activity) });
 
@@ -400,7 +410,6 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
     pub fn view<R: Resource<'o>>(
         &self,
         bounds: impl RangeBounds<Time>,
-        histories: &'o History,
     ) -> Result<Vec<(Time, R::Read)>>
     where
         M::Timelines: HasTimeline<'o, R, M>,
@@ -438,7 +447,7 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
             futures::executor::block_on(futures::future::join_all(nodes.map(|(t, n)| async move {
                 Ok((
                     timeline::duration_to_epoch(t),
-                    *n.read(histories, env).await?.1,
+                    *n.read(&self.session.history, env).await?.1,
                 ))
             })))
         });
@@ -469,7 +478,7 @@ pub trait Model<'o>: Sync {
     type InitialConditions;
     type Timelines: Sync + From<(Duration, &'o SyncBump, Self::InitialConditions)>;
 
-    fn init_history(history: &mut History);
+    fn init_history(history: &History);
 }
 
 /// An activity, which decomposes into a statically-known set of operations. Implemented

@@ -5,7 +5,7 @@ use crate::history::{History, PeregrineDefaultHashBuilder};
 use crate::resource::Resource;
 use crate::timeline::HasTimeline;
 use crate::Model;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use derive_more::with_trait::Error as DeriveError;
 use derive_more::Display;
 use hifitime::Duration;
@@ -20,8 +20,8 @@ pub trait Operation<'o, M: Model<'o>>: Sync {
     fn add_parent(&self, parent: &'o dyn Operation<'o, M>);
     fn remove_parent(&self, parent: &dyn Operation<'o, M>);
 
-    fn insert_self(&'o self, timelines: &mut M::Timelines);
-    fn remove_self(&self, timelines: &mut M::Timelines);
+    fn insert_self(&'o self, timelines: &mut M::Timelines) -> Result<()>;
+    fn remove_self(&self, timelines: &mut M::Timelines) -> Result<()>;
 
     fn parents(&self) -> Vec<&'o dyn Operation<'o, M>>;
     fn notify_parents(&self, time_of_change: Duration, timelines: &M::Timelines);
@@ -96,12 +96,21 @@ where
             .retain(|p| !std::ptr::eq(*p, parent));
     }
 
-    fn insert_self(&'o self, timelines: &mut M::Timelines) {
-        <M::Timelines as HasTimeline<'o, R, M>>::insert_operation(timelines, self.time, self);
+    fn insert_self(&'o self, timelines: &mut M::Timelines) -> Result<()> {
+        let previous =
+            <M::Timelines as HasTimeline<'o, R, M>>::insert_operation(timelines, self.time, self);
+        if previous.is_some() {
+            bail!("Cannot insert initial conditions after other nodes.");
+        }
+        Ok(())
     }
 
-    fn remove_self(&self, timelines: &mut M::Timelines) {
-        <M::Timelines as HasTimeline<'o, R, M>>::remove_operation(timelines, self.time);
+    fn remove_self(&self, timelines: &mut M::Timelines) -> Result<()> {
+        let this = <M::Timelines as HasTimeline<'o, R, M>>::remove_operation(timelines, self.time);
+        if this.is_none() {
+            bail!("Removal failed; couldn't find self at the expected time.")
+        }
+        Ok(())
     }
 
     fn parents(&self) -> Vec<&'o dyn Operation<'o, M>> {
