@@ -296,7 +296,7 @@ pub mod timeline;
 
 pub use crate::history::History;
 use crate::operation::ObservedErrorOutput;
-pub use anyhow::{anyhow, bail, Error, Result};
+pub use anyhow::{anyhow, bail, Context, Error, Result};
 pub use hifitime::Duration;
 pub use hifitime::Epoch as Time;
 use operation::Operation;
@@ -483,13 +483,17 @@ pub trait Model<'o>: Sync {
 
 /// An activity, which decomposes into a statically-known set of operations. Implemented
 /// with the [impl_activity] macro.
-pub trait Activity<'o, M: Model<'o>>: Send + Sync {
+pub trait Activity<'o, M: Model<'o>>: ActivityLabel + Send + Sync {
     fn decompose(
         &'o self,
         start: Time,
         timelines: &M::Timelines,
         bump: &'o SyncBump,
     ) -> Result<(Duration, Vec<&'o dyn Operation<'o, M>>)>;
+}
+
+pub trait ActivityLabel {
+    fn label(&self) -> &'static str;
 }
 
 /// A unique activity ID.

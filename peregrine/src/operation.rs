@@ -4,12 +4,11 @@ use crate::exec::{BumpedFuture, ExecEnvironment};
 use crate::history::{History, PeregrineDefaultHashBuilder};
 use crate::resource::Resource;
 use crate::timeline::HasTimeline;
-use crate::Model;
+use crate::{Model, Time};
 use anyhow::{anyhow, bail, Result};
 use derive_more::with_trait::Error as DeriveError;
-use derive_more::Display;
 use hifitime::Duration;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::BuildHasher;
 use std::pin::Pin;
 use std::sync::Mutex;
@@ -46,8 +45,18 @@ pub trait Writer<'o, R: Resource<'o>, M: Model<'o>>: Operation<'o, M> {
 /// by the original task that computed it,
 /// and all subsequent reads return this struct, which is filtered out
 /// by `plan.view`.
-#[derive(Copy, Clone, Debug, Default, Display, DeriveError)]
-pub struct ObservedErrorOutput;
+#[derive(Copy, Clone, Debug, Default, DeriveError)]
+pub struct ObservedErrorOutput(pub Time, pub &'static str);
+
+impl Display for ObservedErrorOutput {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "encountered a stale error from a previous run, in activity {} at {}",
+            self.1, self.0
+        )
+    }
+}
 
 pub struct InitialConditionOpInner<'o, R: Resource<'o>> {
     value: <R as Resource<'o>>::Write,

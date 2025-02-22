@@ -153,7 +153,9 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             #(let #all_but_one_write = history.get::<#all_but_one_write>(hash).expect("expected all write outputs from past run to be written to history");)*
             (#(#all_writes),*)
         } else {
-            let (#(#all_writes,)*) = self.activity.#op_body_function(#(*#all_reads,)*)?;
+            use peregrine::{Activity, Context};
+            let (#(#all_writes,)*) = self.activity.#op_body_function(#(*#all_reads,)*)
+                .with_context(|| format!("occured in activity {} at {}", self.activity.label(), self.time))?;
             #(let #all_writes = history.insert::<#all_writes>(hash, #all_writes);)*
             (#(#all_writes),*)
         };
@@ -270,12 +272,15 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                         // Otherwise, wait for a read lock and return the cached results.
                         let read: peregrine::reexports::tokio::sync::RwLockReadGuard<_> = if let Ok(mut write) = self.result.try_write() {
                             if write.is_none() {
+                                use peregrine::ActivityLabel;
                                 // Preemptively store an error result in the output.
                                 // If the operation succeeds this will be overwritten.
                                 // If the operation fails, this leaves us free to return
                                 // the error at any time without having to worry about writing
                                 // it down.
-                                *write = Some(Err(peregrine::operation::ObservedErrorOutput));
+                                *write = Some(Err(peregrine::operation::ObservedErrorOutput(
+                                    peregrine::Time::from_tai_duration(self.time), self.activity.label()
+                                )));
                                 let result = if env.should_spawn == peregrine::exec::ShouldSpawn::Yes {
                                     peregrine::exec::EXECUTOR.spawn_scoped(async move {
                                         let new_bump = peregrine::exec::SyncBump::new();

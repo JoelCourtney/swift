@@ -85,7 +85,7 @@ where
         if let Some((t, _)) = cursor_mut.peek_prev() {
             if *t < time {
                 cursor_mut.insert_before(time, value).unwrap();
-                return *cursor_mut.as_cursor().peek_prev().unwrap().1;
+                return Some(*cursor_mut.as_cursor().peek_prev().unwrap().1);
             }
         }
         self.0.insert(time, value);

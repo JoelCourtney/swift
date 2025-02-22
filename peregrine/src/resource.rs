@@ -16,6 +16,7 @@ macro_rules! resource {
         }
 
         impl<'h> $crate::resource::Resource<'h> for $name {
+            const LABEL: &'static str = $crate::reexports::peregrine_macros::code_to_str!($name);
             const STATIC: bool = true;
             type Read = $ty;
             type Write = $ty;
@@ -23,10 +24,6 @@ macro_rules! resource {
         }
 
         impl $crate::resource::ResourceHistoryPlugin for $name {
-            fn label(&self) -> String {
-                $crate::reexports::peregrine_macros::code_to_str!($name).to_string()
-            }
-
             fn write_type_string(&self) -> String {
                 $crate::reexports::peregrine_macros::code_to_str!($ty).to_string()
             }
@@ -68,6 +65,7 @@ macro_rules! resource {
         }
 
         impl<'h> $crate::resource::Resource<'h> for $name {
+            const LABEL: &'static str = $crate::reexports::peregrine_macros::code_to_str!($name);
             const STATIC: bool = true;
             type Read = &'h <$ty as std::ops::Deref>::Target;
             type Write = $ty;
@@ -75,10 +73,6 @@ macro_rules! resource {
         }
 
         impl $crate::resource::ResourceHistoryPlugin for $name {
-            fn label(&self) -> String {
-                $crate::reexports::peregrine_macros::code_to_str!($name).to_string()
-            }
-
             fn write_type_string(&self) -> String {
                 $crate::reexports::peregrine_macros::code_to_str!($ty).to_string()
             }
@@ -125,6 +119,8 @@ macro_rules! resource {
 /// For more complex resources they may be different but related types, like [String] and [&str][str].
 /// This is for performance reasons, to avoid unnecessary cloning of heap-allocated data.
 pub trait Resource<'h>: 'static + Sync {
+    const LABEL: &'static str;
+
     /// Whether the resource represents a value that can vary even when not actively written to by
     /// an operation. This is used for cache invalidation.
     const STATIC: bool;
@@ -141,7 +137,6 @@ pub trait Resource<'h>: 'static + Sync {
 }
 
 pub trait ResourceHistoryPlugin: Sync {
-    fn label(&self) -> String;
     fn write_type_string(&self) -> String;
 
     fn ser<'h>(
