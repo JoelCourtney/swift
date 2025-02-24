@@ -82,9 +82,7 @@ async fn main() -> peregrine::Result<()> {
     println!("built");
 
     let start = plan_start + Duration::from_seconds(30_000_000.0 - 10.0);
-    let result = plan
-        .view::<a>(start..start + Duration::from_seconds(20.0))
-        .await?;
+    let result = plan.view::<a>(start..start + Duration::from_seconds(20.0))?;
 
     dbg!(result);
 

@@ -112,6 +112,7 @@ impl Parse for Op {
             writes,
             read_writes,
             when,
+            // delay: None,
             body,
             uuid: uuid::Uuid::new_v4().to_string().replace("-", "_"),
         })

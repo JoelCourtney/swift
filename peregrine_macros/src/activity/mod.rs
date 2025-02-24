@@ -46,6 +46,12 @@ struct Op {
     writes: Vec<Ident>,
     read_writes: Vec<Ident>,
     when: Expr,
+    // delay: Option<OpDelay>,
     body: Block,
     uuid: String,
 }
+
+// struct OpDelay {
+//     reads: Vec<Ident>,
+//     delay: Expr,
+// }

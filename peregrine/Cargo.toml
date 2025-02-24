@@ -32,7 +32,6 @@ bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 foldhash = "0.1.4"
 # A concurrent hashmap for storing history. Used for copiable resources.
 dashmap = { version = "6.1.0", features = ["serde"] }
-# The central trait that `elsa` depends on.
 stable_deref_trait = "1.2.0"
 type-map = "0.5.0"
 type_reg = { version = "0.8.0", features = ["untagged"] }
@@ -40,15 +39,16 @@ inventory = "0.3.19"
 
 ## MEMORY
 # An arena allocator used for Futures during simulation, and operations trait objects.
-bumpalo = { version = "3.17.0", features = ["boxed"] }
 bumpalo-herd = "0.1.2"
 
 ## ASYNC
-tokio = { version = "1.43.0", features = ["rt", "sync", "parking_lot"] }
 # Used to block on and join futures in a sync context.
-futures = "0.3.31"
-async-scoped = { version = "0.9.0", features = ["use-tokio"] }
 parking_lot = { version = "0.12.3", features = ["hardware-lock-elision"] }
+oneshot = "0.1.11"
+
+## PARALLELISM
+rayon = "1.10.0"
+crossbeam = "0.8.4"
 
 ## TIME
 # A timekeeping library made for space missions, that follows the same standards as SPICE.

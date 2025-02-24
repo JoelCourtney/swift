@@ -1,14 +1,13 @@
 #![doc(hidden)]
 
-pub use async_scoped;
-pub use bumpalo;
 pub use bumpalo_herd;
-pub use futures;
+pub use crossbeam;
 pub use hifitime;
 pub use inventory;
 pub use parking_lot;
 pub use peregrine_macros;
+pub use rayon;
 pub use serde;
-pub use tokio;
+pub use smallvec;
 pub use type_map;
 pub use type_reg;

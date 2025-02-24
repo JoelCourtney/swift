@@ -1,38 +1,27 @@
-#![doc(hidden)]
+use crate::History;
+use crate::operation::ErrorAccumulator;
 
-use bumpalo_herd::Herd;
-use std::future::Future;
-use std::pin::Pin;
-
-pub const STACK_LIMIT: u16 = 1000;
+pub const STACK_LIMIT: usize = 1000;
 
 #[derive(Copy, Clone)]
-pub struct ExecEnvironment<'b> {
-    pub herd: &'b Herd,
-    pub stack_counter: u16,
+pub struct ExecEnvironment<'s, 'o: 's> {
+    pub history: &'o History,
+    pub errors: &'s ErrorAccumulator,
+    pub stack_counter: usize,
 }
 
-impl<'b> ExecEnvironment<'b> {
-    pub fn new(herd: &'b Herd) -> Self {
-        ExecEnvironment {
-            herd,
-            stack_counter: 0,
-        }
-    }
-
-    pub fn increment(self) -> Self {
-        ExecEnvironment {
-            herd: self.herd,
+impl<'s, 'o> ExecEnvironment<'s, 'o> {
+    pub fn increment(self) -> ExecEnvironment<'s, 'o> {
+        Self {
             stack_counter: self.stack_counter + 1,
+            ..self
         }
     }
 
-    pub fn reset(&self) -> Self {
-        ExecEnvironment {
-            herd: self.herd,
+    pub fn reset(self) -> ExecEnvironment<'s, 'o> {
+        Self {
             stack_counter: 0,
+            ..self
         }
     }
 }
-
-pub type BumpedFuture<'b, T> = Pin<&'b mut (dyn Future<Output = T> + Send + 'b)>;

@@ -4,8 +4,8 @@ use peregrine::*;
 use std::sync::atomic::Ordering;
 use util::*;
 
-#[tokio::test]
-async fn cache_across_runs() -> Result<()> {
+#[test]
+fn cache_across_runs() -> Result<()> {
     let session = Session::new();
     let mut plan = init_plan(&session);
 
@@ -18,19 +18,19 @@ async fn cache_across_runs() -> Result<()> {
 
     assert_eq!(0, counter.load(Ordering::SeqCst));
 
-    assert_eq!(2, plan.sample::<a>(seconds(4)).await?);
+    assert_eq!(2, plan.sample::<a>(seconds(4))?);
     assert_eq!(1, counter.load(Ordering::SeqCst));
 
-    assert_eq!(1, plan.sample::<b>(seconds(4)).await?);
-    assert_eq!(1, plan.sample::<b>(seconds(4)).await?);
-    assert_eq!(1, plan.sample::<b>(seconds(4)).await?);
+    assert_eq!(1, plan.sample::<b>(seconds(4))?);
+    assert_eq!(1, plan.sample::<b>(seconds(4))?);
+    assert_eq!(1, plan.sample::<b>(seconds(4))?);
     assert_eq!(1, counter.load(Ordering::SeqCst));
 
     Ok(())
 }
 
-#[tokio::test]
-async fn cache_within_single_run() -> Result<()> {
+#[test]
+fn cache_within_single_run() -> Result<()> {
     let session = Session::new();
     let mut plan = init_plan(&session);
 
@@ -44,14 +44,14 @@ async fn cache_within_single_run() -> Result<()> {
 
     assert_eq!(0, counter.load(Ordering::SeqCst));
 
-    assert_eq!(3, plan.sample::<a>(seconds(4)).await?);
+    assert_eq!(3, plan.sample::<a>(seconds(4))?);
     assert_eq!(1, counter.load(Ordering::SeqCst));
 
     Ok(())
 }
 
-#[tokio::test]
-async fn load_cache_from_history() -> Result<()> {
+#[test]
+fn load_cache_from_history() -> Result<()> {
     let session = Session::new();
     let mut plan = init_plan(&session);
     let (node, counter) = EvalCounter::new();
@@ -61,7 +61,7 @@ async fn load_cache_from_history() -> Result<()> {
     plan.insert(seconds(2), SetBToA)?;
 
     assert_eq!(0, counter.load(Ordering::SeqCst));
-    assert_eq!(1, plan.sample::<b>(seconds(2)).await?);
+    assert_eq!(1, plan.sample::<b>(seconds(2))?);
     assert_eq!(1, counter.load(Ordering::SeqCst));
 
     drop(plan);
@@ -74,14 +74,14 @@ async fn load_cache_from_history() -> Result<()> {
     plan.insert(seconds(2), IncrementA)?;
 
     assert_eq!(0, counter.load(Ordering::SeqCst));
-    assert_eq!(2, plan.sample::<a>(seconds(2)).await?);
+    assert_eq!(2, plan.sample::<a>(seconds(2))?);
     assert_eq!(0, counter.load(Ordering::SeqCst));
 
     Ok(())
 }
 
-#[tokio::test]
-async fn load_cache_after_rollbacks_no_sim() -> Result<()> {
+#[test]
+fn load_cache_after_rollbacks_no_sim() -> Result<()> {
     let session = Session::new();
     let mut plan = init_plan(&session);
 
@@ -96,7 +96,7 @@ async fn load_cache_after_rollbacks_no_sim() -> Result<()> {
 
     assert_eq!(0, counter1.load(Ordering::SeqCst));
     assert_eq!(0, counter2.load(Ordering::SeqCst));
-    assert_eq!(3, plan.sample::<a>(seconds(4)).await?);
+    assert_eq!(3, plan.sample::<a>(seconds(4))?);
     assert_eq!(1, counter1.load(Ordering::SeqCst));
     assert_eq!(1, counter2.load(Ordering::SeqCst));
 
@@ -104,15 +104,15 @@ async fn load_cache_after_rollbacks_no_sim() -> Result<()> {
 
     plan.insert(seconds(2), IncrementA)?;
 
-    assert_eq!(3, plan.sample::<a>(seconds(4)).await?);
+    assert_eq!(3, plan.sample::<a>(seconds(4))?);
     assert_eq!(1, counter1.load(Ordering::SeqCst));
     assert_eq!(1, counter2.load(Ordering::SeqCst));
 
     Ok(())
 }
 
-#[tokio::test]
-async fn load_cache_after_rollbacks_sim_in_between() -> Result<()> {
+#[test]
+fn load_cache_after_rollbacks_sim_in_between() -> Result<()> {
     let session = Session::new();
     let mut plan = init_plan(&session);
 
@@ -127,17 +127,17 @@ async fn load_cache_after_rollbacks_sim_in_between() -> Result<()> {
 
     assert_eq!(0, counter1.load(Ordering::SeqCst));
     assert_eq!(0, counter2.load(Ordering::SeqCst));
-    assert_eq!(3, plan.sample::<a>(seconds(4)).await?);
+    assert_eq!(3, plan.sample::<a>(seconds(4))?);
     assert_eq!(1, counter1.load(Ordering::SeqCst));
     assert_eq!(1, counter2.load(Ordering::SeqCst));
 
     plan.remove(id)?;
 
-    assert_eq!(2, plan.sample::<a>(seconds(4)).await?);
+    assert_eq!(2, plan.sample::<a>(seconds(4))?);
 
     plan.insert(seconds(2), IncrementA)?;
 
-    assert_eq!(3, plan.sample::<a>(seconds(4)).await?);
+    assert_eq!(3, plan.sample::<a>(seconds(4))?);
     assert_eq!(1, counter1.load(Ordering::SeqCst));
     assert_eq!(2, counter2.load(Ordering::SeqCst));
 
