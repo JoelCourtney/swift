@@ -9,6 +9,7 @@ use anyhow::{Result, anyhow, bail};
 use derive_more::with_trait::Error as DeriveError;
 use hifitime::Duration;
 use parking_lot::Mutex;
+use smallvec::SmallVec;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::BuildHasher;
 use std::pin::Pin;
@@ -22,7 +23,7 @@ pub trait Operation<'o, M: Model<'o>>: Sync {
     fn insert_self(&'o self, timelines: &mut M::Timelines) -> Result<()>;
     fn remove_self(&self, timelines: &mut M::Timelines) -> Result<()>;
 
-    fn parents(&self) -> Vec<&'o dyn Operation<'o, M>>;
+    fn parents(&self) -> ParentsVec<'o, M>;
     fn notify_parents(&self, time_of_change: Duration, timelines: &M::Timelines);
     fn clear_cache(&self) -> bool;
 }
@@ -58,6 +59,8 @@ impl Display for ObservedErrorOutput {
     }
 }
 
+pub type ParentsVec<'o, M> = SmallVec<&'o dyn Operation<'o, M>, 2>;
+
 pub struct InitialConditionOpInner<'o, R: Resource<'o>> {
     value: <R as Resource<'o>>::Write,
     result: Option<(u64, <R as Resource<'o>>::Read)>,
@@ -68,7 +71,7 @@ where
     M::Timelines: HasTimeline<'o, R, M>,
 {
     lock: RwLock<InitialConditionOpInner<'o, R>>,
-    parents: Mutex<Vec<&'o dyn Operation<'o, M>>>,
+    parents: Mutex<ParentsVec<'o, M>>,
     time: Duration,
 }
 
@@ -82,7 +85,7 @@ where
                 value,
                 result: None,
             }),
-            parents: Mutex::new(vec![]),
+            parents: Mutex::new(SmallVec::new()),
             time,
         }
     }
@@ -119,7 +122,7 @@ where
         Ok(())
     }
 
-    fn parents(&self) -> Vec<&'o dyn Operation<'o, M>> {
+    fn parents(&self) -> ParentsVec<'o, M> {
         self.parents.lock().clone()
     }
 

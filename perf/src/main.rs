@@ -45,6 +45,8 @@ async fn main() -> peregrine::Result<()> {
         },
     );
 
+    plan.reserve_activity_capacity(30_000_000);
+
     let mut cursor = plan_start + Duration::from_microseconds(1.0);
 
     for _ in 0..10_000_000 {

@@ -175,7 +175,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
 
     quote! {
         struct #op_relationships<'o, M: peregrine::Model<'o>> {
-            parents: Vec<&'o dyn peregrine::operation::Operation<'o, M>>,
+            parents: peregrine::operation::ParentsVec<'o, M>,
             #(#all_reads: &'o dyn peregrine::operation::Writer<'o, #all_reads, M>,)*
 
         }
@@ -247,7 +247,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                 Ok(())
             }
 
-            fn parents(&self) -> Vec<&'o dyn peregrine::operation::Operation<'o, M>> {
+            fn parents(&self) -> peregrine::operation::ParentsVec<'o, M> {
                 self.relationships.lock().parents.clone()
             }
             fn notify_parents(&self, time_of_change: peregrine::Duration, timelines: &M::Timelines) {
@@ -283,18 +283,18 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                                     peregrine::Time::from_tai_duration(self.time), self.activity.label()
                                 )));
                                 let result = if env.should_spawn == peregrine::exec::ShouldSpawn::Yes {
-                                    let mut scoped_output: peregrine::Result<_> = Err(peregrine::anyhow!(""));
+                                    let mut scoped_output: Option<peregrine::Result<_>> = None;
                                     let output_ref = &mut scoped_output;
 
                                     let fut = async move {
                                         let new_bump = peregrine::exec::SyncBump::new();
                                         let mut env = peregrine::exec::ExecEnvironment::new(&new_bump);
-                                        *output_ref = (async || { #run_internal })().await;
+                                        *output_ref = Some((async || { #run_internal })().await);
                                     };
                                     peregrine::reexports::async_scoped::TokioScope::scope_and_collect(|scope| {
                                         scope.spawn(fut);
                                     }).await;
-                                    scoped_output?
+                                    scoped_output.unwrap()?
                                 } else {
                                     #run_internal?
                                 };
@@ -362,7 +362,7 @@ fn result(idents: &Idents, when: &Expr) -> TokenStream {
                 result: peregrine::reexports::tokio::sync::RwLock::new(None),
                 activity: &self,
                 relationships: peregrine::reexports::parking_lot::Mutex::new(#op_relationships {
-                    parents: Vec::with_capacity(2),
+                    parents: peregrine::operation::ParentsVec::new(),
                     #(#all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(timelines, when).ok_or_else(|| peregrine::anyhow!("Could not find upstream node. Did you insert before the initial conditions?"))?,)*
                 }),
                 time: when

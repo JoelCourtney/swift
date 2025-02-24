@@ -358,6 +358,10 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
         }
     }
 
+    pub fn reserve_activity_capacity(&mut self, additional: usize) {
+        self.activities.reserve(additional);
+    }
+
     /// Inserts a new activity into the plan, and returns its unique ID.
     pub fn insert(
         &mut self,
