@@ -125,6 +125,14 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         .map(|i| format_ident!("_peregrine_engine_resource_hash_{i}"))
         .collect::<Vec<_>>();
 
+    let first_read = &all_reads[0];
+    let all_but_one_reads = &all_reads[1..];
+
+    let all_but_one_read_outputs = all_but_one_reads
+        .iter()
+        .map(|i| format_ident!("{i}_output"))
+        .collect::<Vec<_>>();
+
     let run_internal = quote! {
         let new_env = env.increment();
 
@@ -133,11 +141,26 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             (#(relationships_lock.#all_reads,)*)
         };
 
-        #(
-            let (#all_read_resource_hashes, #all_reads) = #all_reads
-                .read(history, new_env)
-                .await?;
-        )*
+        #(let mut #all_but_one_read_outputs: Option<peregrine::Result<_>> = None;)*
+
+        let (.., #first_read,) = peregrine::reexports::tokio::join!(
+            #(
+                peregrine::reexports::async_scoped::TokioScope::scope_and_collect(|scope| {
+                    scope.spawn(async {
+                        let new_bump = peregrine::exec::SyncBump::new();
+                        let mut env = peregrine::exec::ExecEnvironment::new(&new_bump);
+                        #all_but_one_read_outputs = Some(#all_but_one_reads.read(history, new_env).await);
+                    });
+                }),
+            )*
+
+            #first_read.read(history, new_env),
+        );
+
+        let (#((#all_read_resource_hashes, #all_reads),)*) = (
+            #first_read?,
+            #(#all_but_one_read_outputs.unwrap()?,)*
+        );
 
         let hash = {
             use std::hash::{Hasher, BuildHasher, Hash};
@@ -282,12 +305,11 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                                 ));
                                 let result = if env.stack_counter == peregrine::exec::STACK_LIMIT {
                                     let mut scoped_output: Option<peregrine::Result<_>> = None;
-                                    let output_ref = &mut scoped_output;
 
-                                    let fut = async move {
+                                    let fut = async {
                                         let new_bump = peregrine::exec::SyncBump::new();
                                         let mut env = peregrine::exec::ExecEnvironment::new(&new_bump);
-                                        *output_ref = Some((async || { #run_internal })().await);
+                                        scoped_output = Some((async || { #run_internal })().await);
                                     };
                                     peregrine::reexports::async_scoped::TokioScope::scope_and_collect(|scope| {
                                         scope.spawn(fut);

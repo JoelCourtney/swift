@@ -1,17 +1,26 @@
-use peregrine::reexports::hifitime::TimeScale;
+use peregrine::reexports::hifitime::{TimeScale, TimeUnits};
 use peregrine::{Duration, Session, Time, impl_activity, model, resource};
 
 model! {
-    pub Perf(a, b)
+    pub Perf(a, b, c)
 }
 
 resource!(a: u32);
 resource!(ref b: String);
+resource!(c: u32);
 
 struct IncrementA;
 impl_activity! { for IncrementA
     @(start) a -> a {
         a += 1;
+    }
+    Duration::ZERO
+}
+
+struct IncrementC;
+impl_activity! { for IncrementC
+    @(start) c -> c {
+        c += 1;
     }
     Duration::ZERO
 }
@@ -32,6 +41,14 @@ impl_activity! { for ConvertBToA
     Duration::ZERO
 }
 
+struct AddCToA;
+impl_activity! ( for AddCToA
+    @(start) a, c -> a {
+        a += c;
+    }
+    Duration::ZERO
+);
+
 #[tokio::main]
 async fn main() -> peregrine::Result<()> {
     let session = Session::new();
@@ -42,6 +59,7 @@ async fn main() -> peregrine::Result<()> {
         PerfInitialConditions {
             a: 0,
             b: "".to_string(),
+            c: 0,
         },
     );
 
@@ -51,18 +69,21 @@ async fn main() -> peregrine::Result<()> {
 
     for _ in 0..10_000_000 {
         plan.insert(cursor, IncrementA)?;
-        cursor += Duration::from_seconds(1.0);
+        plan.insert(cursor, IncrementC)?;
+        cursor += 1.seconds();
         plan.insert(cursor, ConvertAToB)?;
-        cursor += Duration::from_seconds(1.0);
+        cursor += 1.seconds();
         plan.insert(cursor, ConvertBToA)?;
-        cursor += Duration::from_seconds(1.0);
+        cursor += 1.seconds();
     }
+
+    plan.insert(cursor + 1.seconds(), AddCToA)?;
 
     println!("built");
 
     let start = plan_start + Duration::from_seconds(30_000_000.0 - 10.0);
     let result = plan
-        .view::<b>(start..start + Duration::from_seconds(10.0))
+        .view::<a>(start..start + Duration::from_seconds(20.0))
         .await?;
 
     dbg!(result);
