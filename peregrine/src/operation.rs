@@ -12,13 +12,12 @@ use parking_lot::Mutex;
 use smallvec::SmallVec;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::BuildHasher;
-use std::pin::Pin;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
-pub trait Operation<'o, M: Model<'o> + 'o>: Sync {
+pub trait Node<'o, M: Model<'o> + 'o>: Sync {
     fn find_children(&'o self, time_of_change: Duration, timelines: &M::Timelines);
-    fn add_parent(&self, parent: &'o dyn Operation<'o, M>);
-    fn remove_parent(&self, parent: &dyn Operation<'o, M>);
+    fn add_parent(&self, parent: &'o dyn Node<'o, M>);
+    fn remove_parent(&self, parent: &dyn Node<'o, M>);
 
     fn insert_self(&'o self, timelines: &mut M::Timelines) -> Result<()>;
     fn remove_self(&self, timelines: &mut M::Timelines) -> Result<()>;
@@ -33,14 +32,93 @@ pub trait Operation<'o, M: Model<'o> + 'o>: Sync {
     }
 }
 
-pub trait Writer<'o, R: Resource<'o>, M: Model<'o> + 'o>: Operation<'o, M> {
-    fn read<'b>(
+pub trait Operation<'o, V: 'o, M: Model<'o> + 'o>: Node<'o, M> {
+    fn run<'b>(
         &'o self,
-        histories: &'o History,
+        history: &'o History,
+        env: ExecEnvironment<'b>,
+    ) -> BumpedFuture<'b, Result<(u64, RwLockReadGuard<'o, V>)>>
+    where
+        'o: 'b;
+}
+
+pub struct DynamicOperationResolver<'o, V: 'o, M: Model<'o>> {
+    time: Duration,
+    parent: &'o dyn Node<'o, M>,
+    grounders: SmallVec<(Duration, &'o dyn Operation<'o, Duration, M>, &'o dyn Operation<'o, V, M>), 1>,
+    grounded_child: (Duration, &'o dyn Operation<'o, V, M>),
+}
+
+impl<'o, T: 'o, M: Model<'o>> Node<'o, M> for DynamicOperationResolver<'o, T, M> {
+    fn find_children(&'o self, _time_of_change: Duration, _timelines: &M::Timelines) {
+        todo!()
+    }
+
+    fn add_parent(&self, _parent: &'o dyn Node<'o, M>) {
+        unreachable!()
+    }
+
+    fn remove_parent(&self, _parent: &dyn Node<'o, M>) {
+        unreachable!()
+    }
+
+    fn insert_self(&'o self, _timelines: &mut M::Timelines) -> Result<()> {
+        unreachable!()
+    }
+
+    fn remove_self(&self, _timelines: &mut M::Timelines) -> Result<()> {
+        unreachable!()
+    }
+
+    fn parents(&self) -> ParentsVec<'o, M> {
+        ParentsVec::from([self.parent])
+    }
+
+    fn clear_cache(&self) -> bool {
+        todo!()
+    }
+}
+
+impl<'o, R: Resource<'o>, M: Model<'o>> Operation<'o, R, M> for DynamicOperationResolver<'o, R, M>
+where
+    M::Timelines: HasTimeline<'o, R, M>,
+{
+    fn run<'b>(
+        &'o self,
+        history: &'o History,
         env: ExecEnvironment<'b>,
     ) -> BumpedFuture<'b, Result<(u64, RwLockReadGuard<'o, <R as Resource<'o>>::Read>)>>
     where
-        'o: 'b;
+        'o: 'b,
+    {
+        assert!(!self.grounders.is_empty());
+        env.bump_future(async move {
+            let mut latest_grounder = self.grounded_child;
+
+            for (start, delay, grounder) in &self.grounders[1..] {
+                let time = *start + *delay.run(history, env).await?.1;
+                if time < self.time {
+                    match latest_grounder {
+                        Some((previous_time, _)) if previous_time < time => {
+                            latest_grounder = Some((time, *grounder));
+                        }
+                        None => {
+                            latest_grounder = Some((time, *grounder));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if let Some((t, g)) = latest_grounder {
+                if t > self.grounded_child.0 {
+                    return g.read(history, env).await;
+                }
+            }
+
+            self.grounded_child.1.read(history, env).await
+        })
+    }
 }
 
 /// An internal marker error to signify that a node attempted to read
@@ -64,7 +142,7 @@ impl Display for ObservedErrorOutput {
     }
 }
 
-pub type ParentsVec<'o, M> = SmallVec<&'o dyn Operation<'o, M>, 2>;
+pub type ParentsVec<'o, M> = SmallVec<&'o dyn Node<'o, M>, 2>;
 
 pub struct InitialConditionOpInner<'o, R: Resource<'o>> {
     value: <R as Resource<'o>>::Write,
@@ -96,7 +174,7 @@ where
     }
 }
 
-impl<'o, R: Resource<'o>, M: Model<'o>> Operation<'o, M> for InitialConditionOp<'o, R, M>
+impl<'o, R: Resource<'o>, M: Model<'o>> Node<'o, M> for InitialConditionOp<'o, R, M>
 where
     M::Timelines: HasTimeline<'o, R, M>,
 {
@@ -104,11 +182,11 @@ where
         unreachable!()
     }
 
-    fn add_parent(&self, parent: &'o dyn Operation<'o, M>) {
+    fn add_parent(&self, parent: &'o dyn Node<'o, M>) {
         self.parents.lock().push(parent);
     }
 
-    fn remove_parent(&self, parent: &dyn Operation<'o, M>) {
+    fn remove_parent(&self, parent: &dyn Node<'o, M>) {
         self.parents.lock().retain(|p| !std::ptr::eq(*p, parent));
     }
 
@@ -141,38 +219,34 @@ where
     where
         'o: 'b,
     {
-        unsafe {
-            Pin::new_unchecked(env.herd.get().alloc(async move {
-                let read_guard = if let Ok(mut write_guard) = self.lock.try_write() {
-                    if write_guard.result.is_none() {
-                        let hash = PeregrineDefaultHashBuilder::default().hash_one(
-                            bincode::serde::encode_to_vec(
-                                &write_guard.value,
-                                bincode::config::standard(),
-                            )?,
-                        );
-                        if let Some(r) = histories.get::<R>(hash) {
-                            write_guard.result = Some((hash, r));
-                        } else {
-                            write_guard.result = Some((
-                                hash,
-                                histories.insert::<R>(hash, write_guard.value.clone()),
-                            ));
-                        }
+        env.bump_future(async move {
+            let read_guard = if let Ok(mut write_guard) = self.lock.try_write() {
+                if write_guard.result.is_none() {
+                    let hash = PeregrineDefaultHashBuilder::default().hash_one(
+                        bincode::serde::encode_to_vec(
+                            &write_guard.value,
+                            bincode::config::standard(),
+                        )?,
+                    );
+                    if let Some(r) = histories.get::<R>(hash) {
+                        write_guard.result = Some((hash, r));
+                    } else {
+                        write_guard.result =
+                            Some((hash, histories.insert::<R>(hash, write_guard.value.clone())));
                     }
-                    write_guard.downgrade()
-                } else {
-                    self.lock.read().await
-                };
-                let hash = read_guard
-                    .result
-                    .ok_or_else(|| anyhow!("initial condition result not written"))?
-                    .0;
-                Ok((
-                    hash,
-                    RwLockReadGuard::map(read_guard, |o| &o.result.as_ref().unwrap().1),
-                ))
-            }))
-        }
+                }
+                write_guard.downgrade()
+            } else {
+                self.lock.read().await
+            };
+            let hash = read_guard
+                .result
+                .ok_or_else(|| anyhow!("initial condition result not written"))?
+                .0;
+            Ok((
+                hash,
+                RwLockReadGuard::map(read_guard, |o| &o.result.as_ref().unwrap().1),
+            ))
+        })
     }
 }

@@ -33,6 +33,10 @@ impl<'b> ExecEnvironment<'b> {
             stack_counter: 0,
         }
     }
+
+    pub fn bump_future<T>(&self, fut: impl Future<Output = T> + Send + 'b) -> BumpedFuture<'b, T> {
+        unsafe { Pin::new_unchecked(self.herd.get().alloc(fut)) }
+    }
 }
 
 pub type BumpedFuture<'b, T> = Pin<&'b mut (dyn Future<Output = T> + Send + 'b)>;

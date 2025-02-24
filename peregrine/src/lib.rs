@@ -300,7 +300,7 @@ pub use anyhow::{Context, Error, Result, anyhow, bail};
 use bumpalo_herd::{Herd, Member};
 pub use hifitime::Duration;
 pub use hifitime::Epoch as Time;
-use operation::Operation;
+use operation::Node;
 use resource::Resource;
 use timeline::HasTimeline;
 
@@ -352,7 +352,7 @@ pub struct Plan<'o, M: Model<'o>> {
 
 struct DecomposedActivity<'o, M> {
     activity: *mut dyn Activity<'o, M>,
-    operations: Vec<&'o dyn Operation<'o, M>>,
+    operations: Vec<&'o dyn Node<'o, M>>,
 }
 
 impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
@@ -513,7 +513,7 @@ pub trait Activity<'o, M: Model<'o>>: Send + Sync {
         start: Time,
         timelines: &M::Timelines,
         bump: &Member<'o>,
-    ) -> Result<(Duration, Vec<&'o dyn Operation<'o, M>>)>;
+    ) -> Result<(Duration, Vec<&'o dyn Node<'o, M>>)>;
 }
 
 pub trait ActivityLabel {
