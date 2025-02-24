@@ -41,6 +41,7 @@ inventory = "0.3.19"
 ## MEMORY
 # An arena allocator used for Futures during simulation, and operations trait objects.
 bumpalo = { version = "3.17.0", features = ["boxed"] }
+bumpalo-herd = "0.1.2"
 
 ## ASYNC
 tokio = { version = "1.43.0", features = ["rt", "sync", "parking_lot"] }

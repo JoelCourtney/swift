@@ -2,6 +2,7 @@
 
 pub use async_scoped;
 pub use bumpalo;
+pub use bumpalo_herd;
 pub use futures;
 pub use hifitime;
 pub use inventory;

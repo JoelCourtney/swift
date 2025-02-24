@@ -38,7 +38,7 @@ impl ToTokens for Activity {
         let result = quote! {
             impl<'o, M: peregrine::Model<'o> + 'o> peregrine::Activity<'o, M> for #name
             where #timelines_bound {
-                fn decompose(&'o self, start: peregrine::Time, timelines: &M::Timelines, bump: &'o peregrine::exec::SyncBump) -> peregrine::Result<(peregrine::Duration, Vec<&'o dyn peregrine::operation::Operation<'o, M>>)> {
+                fn decompose(&'o self, start: peregrine::Time, timelines: &M::Timelines, bump: &peregrine::reexports::bumpalo_herd::Member<'o>) -> peregrine::Result<(peregrine::Duration, Vec<&'o dyn peregrine::operation::Operation<'o, M>>)> {
                     let mut operations: Vec<&'o dyn peregrine::operation::Operation<'o, M>> = Vec::with_capacity(#num_operations);
                     let duration = { #(#lines)* };
                     Ok((duration, operations))

@@ -147,9 +147,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             #(
                 peregrine::reexports::async_scoped::TokioScope::scope_and_collect(|scope| {
                     scope.spawn(async {
-                        let new_bump = peregrine::exec::SyncBump::new();
-                        let mut env = peregrine::exec::ExecEnvironment::new(&new_bump);
-                        #all_but_one_read_outputs = Some(#all_but_one_reads.read(history, new_env).await);
+                        #all_but_one_read_outputs = Some(#all_but_one_reads.read(history, new_env.reset()).await);
                     });
                 }),
             )*
@@ -283,7 +281,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             impl<'o, M: peregrine::Model<'o>> peregrine::operation::Writer<'o, #all_writes, M> for #op<'o, M>
             where #timelines_bound {
                 fn read<'b>(&'o self, history: &'o peregrine::History, env: peregrine::exec::ExecEnvironment<'b>) -> peregrine::exec::BumpedFuture<'b, peregrine::Result<(u64, peregrine::reexports::tokio::sync::RwLockReadGuard<'o, <#all_writes as peregrine::resource::Resource<'o>>::Read>)>> where 'o: 'b {
-                    unsafe { std::pin::Pin::new_unchecked(env.bump.alloc(async move {
+                    unsafe { std::pin::Pin::new_unchecked(env.herd.get().alloc(async move {
                         // If you (the thread) can get the write lock on the node, then you are responsible
                         // for calculating the hash and value if they aren't present.
                         // Otherwise, wait for a read lock and return the cached results.
@@ -305,10 +303,8 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                                 ));
                                 let result = if env.stack_counter == peregrine::exec::STACK_LIMIT {
                                     let mut scoped_output: Option<peregrine::Result<_>> = None;
-
+                                    let env = env.reset();
                                     let fut = async {
-                                        let new_bump = peregrine::exec::SyncBump::new();
-                                        let mut env = peregrine::exec::ExecEnvironment::new(&new_bump);
                                         scoped_output = Some((async || { #run_internal })().await);
                                     };
                                     peregrine::reexports::async_scoped::TokioScope::scope_and_collect(|scope| {

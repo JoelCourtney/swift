@@ -142,7 +142,7 @@ where
         'o: 'b,
     {
         unsafe {
-            Pin::new_unchecked(env.bump.alloc(async move {
+            Pin::new_unchecked(env.herd.get().alloc(async move {
                 let read_guard = if let Ok(mut write_guard) = self.lock.try_write() {
                     if write_guard.result.is_none() {
                         let hash = PeregrineDefaultHashBuilder::default().hash_one(

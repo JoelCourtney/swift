@@ -52,8 +52,8 @@ impl ToTokens for Model {
                 #(#timeline_names: peregrine::timeline::Timeline<'o, #resources, #name>,)*
             }
 
-            impl<'o> From<(peregrine::Duration, &'o peregrine::exec::SyncBump, #initial_conditions_struct_name<'o>)> for #timelines_struct_name<'o> {
-                fn from((time, bump, inish_condish): (peregrine::Duration, &'o peregrine::exec::SyncBump, #initial_conditions_struct_name)) -> Self {
+            impl<'o> From<(peregrine::Duration, &peregrine::reexports::bumpalo_herd::Member<'o>, #initial_conditions_struct_name<'o>)> for #timelines_struct_name<'o> {
+                fn from((time, bump, inish_condish): (peregrine::Duration, &peregrine::reexports::bumpalo_herd::Member<'o>, #initial_conditions_struct_name)) -> Self {
                     Self {
                         #(#timeline_names: peregrine::timeline::Timeline::<#resources, #name>::init(
                             time,
