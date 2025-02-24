@@ -5,7 +5,7 @@ use crate::history::{History, PeregrineDefaultHashBuilder};
 use crate::resource::Resource;
 use crate::timeline::HasTimeline;
 use crate::{Model, Time};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use derive_more::with_trait::Error as DeriveError;
 use hifitime::Duration;
 use parking_lot::Mutex;
@@ -15,7 +15,7 @@ use std::hash::BuildHasher;
 use std::pin::Pin;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
-pub trait Operation<'o, M: Model<'o>>: Sync {
+pub trait Operation<'o, M: Model<'o> + 'o>: Sync {
     fn find_children(&'o self, time_of_change: Duration, timelines: &M::Timelines);
     fn add_parent(&self, parent: &'o dyn Operation<'o, M>);
     fn remove_parent(&self, parent: &dyn Operation<'o, M>);
@@ -24,11 +24,16 @@ pub trait Operation<'o, M: Model<'o>>: Sync {
     fn remove_self(&self, timelines: &mut M::Timelines) -> Result<()>;
 
     fn parents(&self) -> ParentsVec<'o, M>;
-    fn notify_parents(&self, time_of_change: Duration, timelines: &M::Timelines);
     fn clear_cache(&self) -> bool;
+
+    fn notify_parents(&self, time_of_change: Duration, timelines: &M::Timelines) {
+        for parent in self.parents() {
+            parent.find_children(time_of_change, timelines);
+        }
+    }
 }
 
-pub trait Writer<'o, R: Resource<'o>, M: Model<'o>>: Operation<'o, M> {
+pub trait Writer<'o, R: Resource<'o>, M: Model<'o> + 'o>: Operation<'o, M> {
     fn read<'b>(
         &'o self,
         histories: &'o History,
@@ -72,7 +77,7 @@ where
 {
     lock: RwLock<InitialConditionOpInner<'o, R>>,
     parents: Mutex<ParentsVec<'o, M>>,
-    time: Duration,
+    _time: Duration,
 }
 
 impl<'o, R: Resource<'o>, M: Model<'o>> InitialConditionOp<'o, R, M>
@@ -86,7 +91,7 @@ where
                 result: None,
             }),
             parents: Mutex::new(SmallVec::new()),
-            time,
+            _time: time,
         }
     }
 }
@@ -95,7 +100,9 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Operation<'o, M> for InitialConditionOp<
 where
     M::Timelines: HasTimeline<'o, R, M>,
 {
-    fn find_children(&'o self, _time_of_change: Duration, _timelines: &M::Timelines) {}
+    fn find_children(&'o self, _time_of_change: Duration, _timelines: &M::Timelines) {
+        unreachable!()
+    }
 
     fn add_parent(&self, parent: &'o dyn Operation<'o, M>) {
         self.parents.lock().push(parent);
@@ -105,35 +112,20 @@ where
         self.parents.lock().retain(|p| !std::ptr::eq(*p, parent));
     }
 
-    fn insert_self(&'o self, timelines: &mut M::Timelines) -> Result<()> {
-        let previous =
-            <M::Timelines as HasTimeline<'o, R, M>>::insert_operation(timelines, self.time, self);
-        if previous.is_some() {
-            bail!("Cannot insert initial conditions after other nodes.");
-        }
-        Ok(())
+    fn insert_self(&'o self, _timelines: &mut M::Timelines) -> Result<()> {
+        unreachable!()
     }
 
-    fn remove_self(&self, timelines: &mut M::Timelines) -> Result<()> {
-        let this = <M::Timelines as HasTimeline<'o, R, M>>::remove_operation(timelines, self.time);
-        if this.is_none() {
-            bail!("Removal failed; couldn't find self at the expected time.")
-        }
-        Ok(())
+    fn remove_self(&self, _timelines: &mut M::Timelines) -> Result<()> {
+        Err(anyhow!("Cannot remove initial conditions."))
     }
 
     fn parents(&self) -> ParentsVec<'o, M> {
         self.parents.lock().clone()
     }
 
-    fn notify_parents(&self, time_of_change: Duration, timelines: &M::Timelines) {
-        for parent in self.parents.lock().iter() {
-            parent.find_children(time_of_change, timelines);
-        }
-    }
-
     fn clear_cache(&self) -> bool {
-        false
+        unreachable!()
     }
 }
 

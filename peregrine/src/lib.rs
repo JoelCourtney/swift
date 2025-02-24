@@ -207,7 +207,7 @@
 use crate::exec::{ExecEnvironment, SyncBump};
 use bumpalo::boxed::Box as BumpBox;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{Bound, HashMap};
 use std::ops::RangeBounds;
 
 /// Creates a model and associated structs from a selection of resources.
@@ -314,6 +314,10 @@ impl Session {
         Self::default()
     }
 
+    pub fn into_history(self) -> History {
+        self.history
+    }
+
     pub fn new_plan<'o, M: Model<'o>>(
         &'o self,
         time: Time,
@@ -324,6 +328,15 @@ impl Session {
     {
         M::init_history(&self.history);
         Plan::new(self, time, initial_conditions)
+    }
+}
+
+impl From<History> for Session {
+    fn from(history: History) -> Self {
+        Self {
+            history,
+            ..Self::default()
+        }
     }
 }
 
@@ -419,17 +432,27 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
         M::Timelines: HasTimeline<'o, R, M>,
     {
         let bump = SyncBump::new();
-        let nodes = self
-            .timelines
-            .get_operations((
-                bounds
-                    .start_bound()
-                    .map(|t| timeline::epoch_to_duration(*t)),
-                bounds.end_bound().map(|t| timeline::epoch_to_duration(*t)),
-            ))
-            .into_iter();
+        let mut nodes = self.timelines.get_operations((
+            bounds
+                .start_bound()
+                .map(|t| timeline::epoch_to_duration(*t)),
+            bounds.end_bound().map(|t| timeline::epoch_to_duration(*t)),
+        ));
+
+        match bounds.start_bound() {
+            Bound::Included(t) | Bound::Excluded(t) => {
+                let as_dur = t.to_tai_duration();
+                if nodes.is_empty() || as_dur < nodes[0].0 {
+                    if let Some(n) = self.timelines.find_child(as_dur) {
+                        nodes.insert(0, (as_dur, n));
+                    }
+                }
+            }
+            Bound::Unbounded => {}
+        }
+
         let env = ExecEnvironment::new(&bump);
-        let results = futures::future::join_all(nodes.map(|(t, n)| async move {
+        let results = futures::future::join_all(nodes.into_iter().map(|(t, n)| async move {
             Ok((
                 timeline::duration_to_epoch(t),
                 *n.read(&self.session.history, env).await?.1,
@@ -443,6 +466,18 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
                 Err(e) => e.downcast_ref::<ObservedErrorOutput>().is_none(),
             })
             .collect::<Result<Vec<_>>>()
+    }
+
+    pub async fn sample<R: Resource<'o>>(&self, time: Time) -> Result<R::Read>
+    where
+        M::Timelines: HasTimeline<'o, R, M>,
+    {
+        Ok(self
+            .view(time..=time)
+            .await?
+            .first()
+            .ok_or_else(|| anyhow!("No operations to sample found at or before {time}"))?
+            .1)
     }
 }
 
@@ -468,7 +503,7 @@ pub trait Model<'o>: Sync {
 
 /// An activity, which decomposes into a statically-known set of operations. Implemented
 /// with the [impl_activity] macro.
-pub trait Activity<'o, M: Model<'o>>: ActivityLabel + Send + Sync {
+pub trait Activity<'o, M: Model<'o>>: Send + Sync {
     fn decompose(
         &'o self,
         start: Time,
@@ -478,7 +513,7 @@ pub trait Activity<'o, M: Model<'o>>: ActivityLabel + Send + Sync {
 }
 
 pub trait ActivityLabel {
-    fn label(&self) -> &'static str;
+    const LABEL: &'static str;
 }
 
 /// A unique activity ID.

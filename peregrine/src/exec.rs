@@ -1,6 +1,5 @@
 #![doc(hidden)]
 
-use crate::exec::ShouldSpawn::*;
 use bumpalo::Bump;
 use derive_more::Deref;
 use std::future::Future;
@@ -11,21 +10,21 @@ pub const STACK_LIMIT: u16 = 1000;
 #[derive(Copy, Clone)]
 pub struct ExecEnvironment<'b> {
     pub bump: &'b SyncBump,
-    pub should_spawn: ShouldSpawn,
+    pub stack_counter: u16,
 }
 
 impl<'b> ExecEnvironment<'b> {
     pub fn new(b: &'b SyncBump) -> Self {
         ExecEnvironment {
             bump: b,
-            should_spawn: No(0),
+            stack_counter: 0,
         }
     }
 
     pub fn increment(self) -> Self {
         ExecEnvironment {
             bump: self.bump,
-            should_spawn: self.should_spawn.increment(),
+            stack_counter: self.stack_counter + 1,
         }
     }
 }
@@ -39,23 +38,5 @@ unsafe impl Sync for SyncBump {}
 impl SyncBump {
     pub fn new() -> Self {
         Self(Bump::new())
-    }
-}
-
-#[derive(Copy, Clone, Debug, Default, Eq, PartialOrd, PartialEq)]
-pub enum ShouldSpawn {
-    #[default]
-    Yes,
-    No(u16),
-}
-
-impl ShouldSpawn {
-    pub fn increment(self) -> Self {
-        match self {
-            Yes => No(0),
-            No(n) if n < STACK_LIMIT => No(n + 1),
-            No(STACK_LIMIT) => Yes,
-            _ => unreachable!(),
-        }
     }
 }

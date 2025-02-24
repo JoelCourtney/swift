@@ -84,7 +84,7 @@ where
         let mut cursor_mut = self.0.upper_bound_mut(std::ops::Bound::Unbounded);
         if let Some((t, _)) = cursor_mut.peek_prev() {
             if *t < time {
-                cursor_mut.insert_before(time, value).unwrap();
+                cursor_mut.insert_after(time, value).unwrap();
                 return Some(*cursor_mut.as_cursor().peek_prev().unwrap().1);
             }
         }

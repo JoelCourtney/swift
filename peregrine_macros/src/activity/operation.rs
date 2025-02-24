@@ -156,7 +156,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         } else {
             use peregrine::{Activity, Context};
             let (#(#all_writes,)*) = self.activity.#op_body_function(#(*#all_reads,)*)
-                .with_context(|| format!("occured in activity {} at {}", self.activity.label(), self.time))?;
+                .with_context(|| format!("occurred in activity {} at {}", #activity::LABEL, self.time))?;
             #(let #all_writes = history.insert::<#all_writes>(hash, #all_writes);)*
             (#(#all_writes),*)
         };
@@ -181,10 +181,11 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         }
 
         struct #op<'o, M: peregrine::Model<'o>> {
-            result: peregrine::reexports::tokio::sync::RwLock<Option<Result<#output<'o>, peregrine::operation::ObservedErrorOutput>>>,
+            result: peregrine::reexports::tokio::sync::RwLock<Result<#output<'o>, peregrine::operation::ObservedErrorOutput>>,
             relationships: peregrine::reexports::parking_lot::Mutex<#op_relationships<'o, M>>,
             activity: &'o #activity,
             time: peregrine::Duration,
+            cache_valid: std::sync::atomic::AtomicBool
         }
 
         impl<'o, M: peregrine::Model<'o>> peregrine::operation::Operation<'o, M> for #op<'o, M>
@@ -250,16 +251,8 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             fn parents(&self) -> peregrine::operation::ParentsVec<'o, M> {
                 self.relationships.lock().parents.clone()
             }
-            fn notify_parents(&self, time_of_change: peregrine::Duration, timelines: &M::Timelines) {
-                let lock = self.relationships.lock();
-                let parents = lock.parents.clone();
-                drop(lock);
-                for parent in parents {
-                    parent.find_children(time_of_change, timelines);
-                }
-            }
             fn clear_cache(&self) -> bool {
-                self.result.blocking_write().take().is_some()
+                self.cache_valid.fetch_and(false, std::sync::atomic::Ordering::SeqCst)
             }
         }
 
@@ -271,18 +264,23 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                         // If you (the thread) can get the write lock on the node, then you are responsible
                         // for calculating the hash and value if they aren't present.
                         // Otherwise, wait for a read lock and return the cached results.
-                        let read: peregrine::reexports::tokio::sync::RwLockReadGuard<_> = if let Ok(mut write) = self.result.try_write() {
-                            if write.is_none() {
+                        let read = if self.cache_valid.load(std::sync::atomic::Ordering::SeqCst) {
+                            self.result.read().await
+                        } else {
+                            if let Ok(mut write) = self.result.try_write() {
                                 use peregrine::ActivityLabel;
+
+                                self.cache_valid.store(true, std::sync::atomic::Ordering::SeqCst);
+
                                 // Preemptively store an error result in the output.
                                 // If the operation succeeds this will be overwritten.
                                 // If the operation fails, this leaves us free to return
                                 // the error at any time without having to worry about writing
                                 // it down.
-                                *write = Some(Err(peregrine::operation::ObservedErrorOutput(
-                                    peregrine::Time::from_tai_duration(self.time), self.activity.label()
-                                )));
-                                let result = if env.should_spawn == peregrine::exec::ShouldSpawn::Yes {
+                                *write = Err(peregrine::operation::ObservedErrorOutput(
+                                    peregrine::Time::from_tai_duration(self.time), #activity::LABEL
+                                ));
+                                let result = if env.stack_counter == peregrine::exec::STACK_LIMIT {
                                     let mut scoped_output: Option<peregrine::Result<_>> = None;
                                     let output_ref = &mut scoped_output;
 
@@ -298,18 +296,16 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                                 } else {
                                     #run_internal?
                                 };
-                                *write = Some(Ok(result));
+                                *write = Ok(result);
                                 write.downgrade()
                             } else {
-                                write.downgrade()
+                                self.result.read().await
                             }
-                        } else {
-                            self.result.read().await
                         };
 
                         Ok((
-                            read.expect("result was not written")?.hash,
-                            peregrine::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o.as_ref().unwrap().as_ref().unwrap().#all_writes)
+                            (*read)?.hash,
+                            peregrine::reexports::tokio::sync::RwLockReadGuard::map(read, |o| &o.as_ref().unwrap().#all_writes)
                         ))
                     }))}
                 }
@@ -359,13 +355,21 @@ fn result(idents: &Idents, when: &Expr) -> TokenStream {
             let when = peregrine::timeline::epoch_to_duration(#when);
 
             let op = bump.alloc(#op {
-                result: peregrine::reexports::tokio::sync::RwLock::new(None),
+                result: peregrine::reexports::tokio::sync::RwLock::new(Err(peregrine::operation::ObservedErrorOutput(
+                    peregrine::Time::default(), "uninitialized"
+                ))),
+                cache_valid: std::sync::atomic::AtomicBool::new(false),
                 activity: &self,
                 relationships: peregrine::reexports::parking_lot::Mutex::new(#op_relationships {
                     parents: peregrine::operation::ParentsVec::new(),
-                    #(#all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(timelines, when).ok_or_else(|| peregrine::anyhow!("Could not find upstream node. Did you insert before the initial conditions?"))?,)*
+                    #(
+                        #all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(
+                            timelines,
+                            when
+                        ).ok_or_else(|| peregrine::anyhow!("Could not find upstream node. Did you insert before the initial conditions?"))?,
+                    )*
                 }),
-                time: when
+                time: when,
             });
 
             operations.push(op);

@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use stable_deref_trait::StableDeref;
 use std::hash::{BuildHasher, Hasher};
 use std::mem::swap;
-use type_map::concurrent::TypeMap;
+use type_map::concurrent::{Entry, TypeMap};
 use type_reg::untagged::TypeReg;
 
 pub type PeregrineDefaultHashBuilder = foldhash::fast::FixedState;
@@ -19,7 +19,12 @@ pub struct History(RwLock<TypeMap>);
 
 impl History {
     pub fn init<'h, R: Resource<'h>>(&self) {
-        self.0.write().insert(R::History::default());
+        match self.0.write().entry::<R::History>() {
+            Entry::Occupied(_) => {}
+            Entry::Vacant(v) => {
+                v.insert(R::History::default());
+            }
+        }
     }
     pub fn insert<'h, R: Resource<'h>>(&'h self, hash: u64, value: R::Write) -> R::Read {
         self.0
@@ -36,6 +41,9 @@ impl History {
         swap(&mut *self.0.write(), &mut replacement);
         replacement
     }
+    pub fn into_inner(self) -> TypeMap {
+        self.0.into_inner()
+    }
 }
 
 impl From<TypeMap> for History {
@@ -49,13 +57,18 @@ pub trait HistoryAdapter<W, R>: Default {
     fn get(&self, hash: u64) -> Option<R>;
 }
 
+const DASHMAP_STARTING_CAPACITY: usize = 1000;
+
 /// See [Resource].
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CopyHistory<T: Copy + Clone>(DashMap<u64, T, PassThroughHashBuilder>);
 
 impl<T: Copy + Clone> Default for CopyHistory<T> {
     fn default() -> Self {
-        CopyHistory(DashMap::default())
+        CopyHistory(DashMap::with_capacity_and_hasher(
+            DASHMAP_STARTING_CAPACITY,
+            PassThroughHashBuilder,
+        ))
     }
 }
 
@@ -71,12 +84,15 @@ impl<T: Copy + Clone> HistoryAdapter<T, T> for CopyHistory<T> {
 }
 
 /// See [Resource].
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DerefHistory<T: StableDeref + Clone>(DashMap<u64, T, PassThroughHashBuilder>);
 
 impl<T: StableDeref + Clone> Default for DerefHistory<T> {
     fn default() -> Self {
-        DerefHistory(DashMap::default())
+        DerefHistory(DashMap::with_capacity_and_hasher(
+            DASHMAP_STARTING_CAPACITY,
+            PassThroughHashBuilder,
+        ))
     }
 }
 

@@ -46,9 +46,7 @@ impl ToTokens for Activity {
             }
 
             impl peregrine::ActivityLabel for #name {
-                fn label(&self) -> &'static str {
-                    peregrine::reexports::peregrine_macros::code_to_str!(#name)
-                }
+                const LABEL: &'static str = peregrine::reexports::peregrine_macros::code_to_str!(#name);
             }
 
             impl #name {
