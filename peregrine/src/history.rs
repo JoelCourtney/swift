@@ -3,11 +3,11 @@
 use crate::resource::Resource;
 use crate::resource::ResourceHistoryPlugin;
 use dashmap::DashMap;
+use parking_lot::RwLock;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use stable_deref_trait::StableDeref;
 use std::hash::{BuildHasher, Hasher};
 use std::mem::swap;
-use tokio::sync::RwLock;
 use type_map::concurrent::TypeMap;
 use type_reg::untagged::TypeReg;
 
@@ -19,24 +19,21 @@ pub struct History(RwLock<TypeMap>);
 
 impl History {
     pub fn init<'h, R: Resource<'h>>(&self) {
-        self.0.blocking_write().insert(R::History::default());
+        self.0.write().insert(R::History::default());
     }
     pub fn insert<'h, R: Resource<'h>>(&'h self, hash: u64, value: R::Write) -> R::Read {
         self.0
-            .blocking_read()
+            .read()
             .get::<R::History>()
             .unwrap()
             .insert(hash, value)
     }
     pub fn get<'h, R: Resource<'h>>(&'h self, hash: u64) -> Option<R::Read> {
-        self.0
-            .blocking_read()
-            .get::<R::History>()
-            .and_then(|h| h.get(hash))
+        self.0.read().get::<R::History>().and_then(|h| h.get(hash))
     }
     pub fn take_inner(&self) -> TypeMap {
         let mut replacement = TypeMap::new();
-        swap(&mut *self.0.blocking_write(), &mut replacement);
+        swap(&mut *self.0.write(), &mut replacement);
         replacement
     }
 }

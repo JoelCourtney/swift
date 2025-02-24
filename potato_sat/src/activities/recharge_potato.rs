@@ -1,6 +1,6 @@
 use crate::{battery, mode};
-use peregrine::impl_activity;
 use peregrine::Duration;
+use peregrine::impl_activity;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]

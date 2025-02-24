@@ -1,6 +1,6 @@
 use crate::history::HistoryAdapter;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 use type_map::concurrent::TypeMap;
 use type_reg::untagged::TypeReg;

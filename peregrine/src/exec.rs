@@ -1,14 +1,11 @@
 #![doc(hidden)]
 
 use crate::exec::ShouldSpawn::*;
-use async_executor::StaticExecutor;
 use bumpalo::Bump;
 use derive_more::Deref;
 use std::future::Future;
 use std::pin::Pin;
 
-pub static EXECUTOR: StaticExecutor = StaticExecutor::new();
-pub const NUM_THREADS: usize = 4;
 pub const STACK_LIMIT: u16 = 1000;
 
 #[derive(Copy, Clone)]

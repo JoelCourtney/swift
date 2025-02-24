@@ -1,8 +1,8 @@
 #![doc(hidden)]
 
+use crate::Model;
 use crate::operation::Writer;
 use crate::resource::Resource;
-use crate::Model;
 use hifitime::TimeScale::TAI;
 use hifitime::{Duration, Epoch as Time};
 use std::collections::BTreeMap;

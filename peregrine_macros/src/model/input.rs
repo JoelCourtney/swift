@@ -2,7 +2,7 @@ use crate::model::Model;
 use proc_macro2::Ident;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{parenthesized, Path, Token, Visibility};
+use syn::{Path, Token, Visibility, parenthesized};
 
 impl Parse for Model {
     fn parse(input: ParseStream) -> syn::Result<Self> {

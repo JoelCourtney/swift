@@ -5,13 +5,13 @@ use crate::history::{History, PeregrineDefaultHashBuilder};
 use crate::resource::Resource;
 use crate::timeline::HasTimeline;
 use crate::{Model, Time};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use derive_more::with_trait::Error as DeriveError;
 use hifitime::Duration;
+use parking_lot::Mutex;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::BuildHasher;
 use std::pin::Pin;
-use std::sync::Mutex;
 use tokio::sync::{RwLock, RwLockReadGuard};
 
 pub trait Operation<'o, M: Model<'o>>: Sync {
@@ -95,14 +95,11 @@ where
     fn find_children(&'o self, _time_of_change: Duration, _timelines: &M::Timelines) {}
 
     fn add_parent(&self, parent: &'o dyn Operation<'o, M>) {
-        self.parents.lock().unwrap().push(parent);
+        self.parents.lock().push(parent);
     }
 
     fn remove_parent(&self, parent: &dyn Operation<'o, M>) {
-        self.parents
-            .lock()
-            .unwrap()
-            .retain(|p| !std::ptr::eq(*p, parent));
+        self.parents.lock().retain(|p| !std::ptr::eq(*p, parent));
     }
 
     fn insert_self(&'o self, timelines: &mut M::Timelines) -> Result<()> {
@@ -123,11 +120,11 @@ where
     }
 
     fn parents(&self) -> Vec<&'o dyn Operation<'o, M>> {
-        self.parents.lock().unwrap().clone()
+        self.parents.lock().clone()
     }
 
     fn notify_parents(&self, time_of_change: Duration, timelines: &M::Timelines) {
-        for parent in self.parents.lock().unwrap().iter() {
+        for parent in self.parents.lock().iter() {
             parent.find_children(time_of_change, timelines);
         }
     }
@@ -174,7 +171,7 @@ where
                 };
                 let hash = read_guard
                     .result
-                    .ok_or(anyhow!("initial condition result not written"))?
+                    .ok_or_else(|| anyhow!("initial condition result not written"))?
                     .0;
                 Ok((
                     hash,

@@ -1,6 +1,6 @@
 use crate::activity::Op;
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 use syn::Expr;
 
 impl Op {
@@ -128,15 +128,16 @@ fn generate_operation(idents: &Idents) -> TokenStream {
     let run_internal = quote! {
         let new_env = env.increment();
 
-        let relationships = self.relationships.blocking_lock();
+        let (#(#all_reads,)*) = {
+            let relationships_lock = self.relationships.lock();
+            (#(relationships_lock.#all_reads,)*)
+        };
 
         #(
-            let (#all_read_resource_hashes, #all_reads) = relationships.#all_reads
+            let (#all_read_resource_hashes, #all_reads) = #all_reads
                 .read(history, new_env)
                 .await?;
         )*
-
-        std::mem::drop(relationships);
 
         let hash = {
             use std::hash::{Hasher, BuildHasher, Hash};
@@ -181,7 +182,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
 
         struct #op<'o, M: peregrine::Model<'o>> {
             result: peregrine::reexports::tokio::sync::RwLock<Option<Result<#output<'o>, peregrine::operation::ObservedErrorOutput>>>,
-            relationships: peregrine::reexports::tokio::sync::Mutex<#op_relationships<'o, M>>,
+            relationships: peregrine::reexports::parking_lot::Mutex<#op_relationships<'o, M>>,
             activity: &'o #activity,
             time: peregrine::Duration,
         }
@@ -193,7 +194,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
 
                 let mut changed = false;
 
-                let mut lock = self.relationships.blocking_lock();
+                let mut lock = self.relationships.lock();
                 #(
                     let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_reads, M>>::find_child(timelines, self.time).expect("unreachable; could not find a child that was previously there.");
                     if !std::ptr::eq(new_child, lock.#all_reads) {
@@ -217,19 +218,19 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                 }
             }
             fn add_parent(&self, parent: &'o dyn peregrine::operation::Operation<'o, M>) {
-                self.relationships.blocking_lock().parents.push(parent);
+                self.relationships.lock().parents.push(parent);
             }
             fn remove_parent(&self, parent: &dyn peregrine::operation::Operation<'o, M>) {
-                self.relationships.blocking_lock().parents.retain(|p| !std::ptr::eq(*p, parent));
+                self.relationships.lock().parents.retain(|p| !std::ptr::eq(*p, parent));
             }
 
             fn insert_self(&'o self, timelines: &mut M::Timelines) -> peregrine::Result<()> {
                 #(
                     let previous = <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::insert_operation(timelines, self.time, self)
-                        .ok_or(peregrine::anyhow!("Could not find an upstream node. Did you insert before the initial conditions?"))?;
+                        .ok_or_else(|| peregrine::anyhow!("Could not find an upstream node. Did you insert before the initial conditions?"))?;
                     previous.notify_parents(self.time, timelines);
                 )*
-                let lock = self.relationships.blocking_lock();
+                let lock = self.relationships.lock();
                 #(lock.#all_reads.add_parent(self);)*
                 Ok(())
             }
@@ -241,16 +242,16 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                     }
                 )*
                 self.notify_parents(self.time, timelines);
-                let lock = self.relationships.blocking_lock();
+                let lock = self.relationships.lock();
                 #(lock.#all_reads.remove_parent(self);)*
                 Ok(())
             }
 
             fn parents(&self) -> Vec<&'o dyn peregrine::operation::Operation<'o, M>> {
-                self.relationships.blocking_lock().parents.clone()
+                self.relationships.lock().parents.clone()
             }
             fn notify_parents(&self, time_of_change: peregrine::Duration, timelines: &M::Timelines) {
-                let lock = self.relationships.blocking_lock();
+                let lock = self.relationships.lock();
                 let parents = lock.parents.clone();
                 drop(lock);
                 for parent in parents {
@@ -282,11 +283,18 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                                     peregrine::Time::from_tai_duration(self.time), self.activity.label()
                                 )));
                                 let result = if env.should_spawn == peregrine::exec::ShouldSpawn::Yes {
-                                    peregrine::exec::EXECUTOR.spawn_scoped(async move {
+                                    let mut scoped_output: peregrine::Result<_> = Err(peregrine::anyhow!(""));
+                                    let output_ref = &mut scoped_output;
+
+                                    let fut = async move {
                                         let new_bump = peregrine::exec::SyncBump::new();
-                                        let env = peregrine::exec::ExecEnvironment::new(&new_bump);
-                                        #run_internal
-                                    }).await?
+                                        let mut env = peregrine::exec::ExecEnvironment::new(&new_bump);
+                                        *output_ref = (async || { #run_internal })().await;
+                                    };
+                                    peregrine::reexports::async_scoped::TokioScope::scope_and_collect(|scope| {
+                                        scope.spawn(fut);
+                                    }).await;
+                                    scoped_output?
                                 } else {
                                     #run_internal?
                                 };
@@ -353,9 +361,9 @@ fn result(idents: &Idents, when: &Expr) -> TokenStream {
             let op = bump.alloc(#op {
                 result: peregrine::reexports::tokio::sync::RwLock::new(None),
                 activity: &self,
-                relationships: peregrine::reexports::tokio::sync::Mutex::new(#op_relationships {
+                relationships: peregrine::reexports::parking_lot::Mutex::new(#op_relationships {
                     parents: Vec::with_capacity(2),
-                    #(#all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(timelines, when).ok_or(peregrine::anyhow!("Could not find upstream node. Did you insert before the initial conditions?"))?,)*
+                    #(#all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(timelines, when).ok_or_else(|| peregrine::anyhow!("Could not find upstream node. Did you insert before the initial conditions?"))?,)*
                 }),
                 time: when
             });

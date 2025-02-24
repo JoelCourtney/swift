@@ -1,6 +1,6 @@
 use crate::model::Model;
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens, TokenStreamExt};
+use quote::{ToTokens, TokenStreamExt, format_ident, quote};
 
 impl ToTokens for Model {
     fn to_tokens(&self, tokens: &mut TokenStream) {

@@ -1,7 +1,7 @@
 use crate::activity::{Activity, Op, StmtOrOp};
 use proc_macro2::Ident;
 use syn::parse::{Parse, ParseStream};
-use syn::{parenthesized, Block, Error, Expr, Result, Stmt, Token};
+use syn::{Block, Error, Expr, Result, Stmt, Token, parenthesized};
 
 impl Parse for Activity {
     fn parse(input: ParseStream) -> Result<Self> {

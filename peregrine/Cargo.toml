@@ -1,7 +1,7 @@
 [package]
 name = "peregrine"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 authors = ["Joel Courtney <joel.e.courtney@gmail.com>"]
 description = "A discrete event simulation engine similar to NASA-AMMOS's Aerie-Merlin."
@@ -12,7 +12,7 @@ keywords = ["simulation"]
 categories = ["aerospace::simulation", "simulation"]
 
 [features]
-nightly = []
+nightly = ["parking_lot/nightly"]
 default = []
 
 [dependencies]
@@ -43,15 +43,11 @@ inventory = "0.3.19"
 bumpalo = { version = "3.17.0", features = ["boxed"] }
 
 ## ASYNC
-# A simple async executor, chosen because it is the only one that supports scoped spawns
-# where neither the future or its output live for 'static.
-async-executor = { version = "1.13.1", features = ["static"] }
-# Used for the thread shutdown signal.
-async-channel = "2.3.1"
+tokio = { version = "1.43.0", features = ["rt", "sync", "parking_lot"] }
 # Used to block on and join futures in a sync context.
 futures = "0.3.31"
-# Used only for its async semaphore-based objects like RW locks.
-tokio = { version = "1.43.0", default-features = false, features = ["sync"] }
+async-scoped = { version = "0.9.0", features = ["use-tokio"] }
+parking_lot = { version = "0.12.3", features = ["hardware-lock-elision"] }
 
 ## TIME
 # A timekeeping library made for space missions, that follows the same standards as SPICE.

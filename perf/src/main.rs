@@ -1,5 +1,5 @@
 use peregrine::reexports::hifitime::TimeScale;
-use peregrine::{impl_activity, model, resource, Duration, Session, Time};
+use peregrine::{Duration, Session, Time, impl_activity, model, resource};
 
 model! {
     pub Perf(a, b)
@@ -32,7 +32,8 @@ impl_activity! { for ConvertBToA
     Duration::ZERO
 }
 
-fn main() -> peregrine::Result<()> {
+#[tokio::main]
+async fn main() -> peregrine::Result<()> {
     let session = Session::new();
 
     let plan_start = Time::now()?.to_time_scale(TimeScale::TAI);
@@ -58,7 +59,9 @@ fn main() -> peregrine::Result<()> {
     println!("built");
 
     let start = plan_start + Duration::from_seconds(30_000_000.0 - 10.0);
-    let result = plan.view::<b>(start..start + Duration::from_seconds(10.0))?;
+    let result = plan
+        .view::<b>(start..start + Duration::from_seconds(10.0))
+        .await?;
 
     dbg!(result);
 

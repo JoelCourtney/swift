@@ -1,6 +1,6 @@
 use crate::activity::{Activity, StmtOrOp};
 use proc_macro2::TokenStream;
-use quote::{quote, ToTokens, TokenStreamExt};
+use quote::{ToTokens, TokenStreamExt, quote};
 
 impl ToTokens for Activity {
     fn to_tokens(&self, tokens: &mut TokenStream) {

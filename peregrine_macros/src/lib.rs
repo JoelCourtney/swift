@@ -1,7 +1,7 @@
 use syn::parse_macro_input;
 
-use crate::activity::{process_activity, Activity};
-use crate::model::{process_model, Model};
+use crate::activity::{Activity, process_activity};
+use crate::model::{Model, process_model};
 use proc_macro::TokenStream;
 use quote::quote;
 
