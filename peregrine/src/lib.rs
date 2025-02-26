@@ -294,12 +294,10 @@ pub mod timeline;
 
 use crate::exec::ExecEnvironment;
 pub use crate::history::History;
-use crate::operation::{Continuation, ErrorAccumulator};
 pub use anyhow::{Context, Error, Result, anyhow, bail};
 use bumpalo_herd::{Herd, Member};
-pub use hifitime::Duration;
-pub use hifitime::Epoch as Time;
-use operation::Node;
+pub use hifitime::{Duration, Epoch as Time};
+use operation::{Continuation, ErrorAccumulator, Node};
 use resource::Resource;
 use timeline::HasTimeline;
 
@@ -477,22 +475,6 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
                 .map(|(t, r)| (timeline::duration_to_epoch(t), r.recv().unwrap().unwrap()))
                 .collect())
         }
-
-        // let results = futures::future::join_all(nodes.into_iter().map(|(t, n)| async move {
-        //     Ok((
-        //         timeline::duration_to_epoch(t),
-        //         *n.read(&session.history, env).await?.1,
-        //     ))
-        // }))
-        // .await;
-        //
-        // results
-        //     .into_iter()
-        //     .filter(|r: &Result<_>| match r {
-        //         Ok(_) => true,
-        //         Err(e) => e.downcast_ref::<ObservedErrorOutput>().is_none(),
-        //     })
-        //     .collect::<Result<Vec<_>>>()
     }
 
     pub fn sample<R: Resource<'o>>(&mut self, time: Time) -> Result<R::Read>

@@ -143,12 +143,12 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         struct #op_relationships<'o, M: peregrine::Model<'o>> {
             downstreams: peregrine::operation::NodeVec<'o, M>,
             #(#all_reads: &'o dyn peregrine::operation::Upstream<'o, #all_reads, M>,)*
-            #(#all_read_responses: Result<(u64, <#all_reads as peregrine::resource::Resource<'o>>::Read), peregrine::operation::ObservedErrorOutput>,)*
+            #(#all_read_responses: peregrine::operation::InternalResult<(u64, <#all_reads as peregrine::resource::Resource<'o>>::Read)>,)*
         }
 
         struct #op<'o, M: peregrine::Model<'o>> {
             state: peregrine::reexports::crossbeam::atomic::AtomicCell<peregrine::operation::OperationState>,
-            result: peregrine::operation::UnsyncUnsafeCell<Result<#output<'o>, peregrine::operation::ObservedErrorOutput>>,
+            result: peregrine::operation::UnsyncUnsafeCell<peregrine::operation::InternalResult<#output<'o>>>,
             relationships: peregrine::reexports::parking_lot::Mutex<#op_relationships<'o, M>>,
             activity: &'o #activity,
             time: peregrine::Duration,
@@ -204,7 +204,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                 }
             }
 
-            fn run(&'o self, relationships_lock: peregrine::reexports::parking_lot::MutexGuard<'o, #op_relationships<'o, M>>, env: peregrine::exec::ExecEnvironment<'s, 'o>) -> peregrine::Result<#output<'o>, peregrine::operation::ObservedErrorOutput> {
+            fn run(&'o self, relationships_lock: peregrine::reexports::parking_lot::MutexGuard<'o, #op_relationships<'o, M>>, env: peregrine::exec::ExecEnvironment<'s, 'o>) -> peregrine::operation::InternalResult<#output<'o>> {
                 use peregrine::{ActivityLabel, Context};
 
                 let (#((#all_read_response_hashes, #all_reads),)*) = (#(relationships_lock.#all_read_responses?,)*);
@@ -321,7 +321,9 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         #(
             impl<'o, M: peregrine::Model<'o>> peregrine::operation::Downstream<'o, #all_reads, M> for #op<'o, M>
             where #timelines_bound {
-                fn respond<'s>(&'o self, value: Result<(u64, <#all_reads as peregrine::resource::Resource<'o>>::Read), peregrine::operation::ObservedErrorOutput>, scope: &peregrine::reexports::rayon::Scope<'s>, env: peregrine::exec::ExecEnvironment<'s, 'o>) where 'o: 's {
+                fn respond<'s>(&'o self, value: peregrine::operation::InternalResult<(u64, <#all_reads as peregrine::resource::Resource<'o>>::Read)>, scope: &peregrine::reexports::rayon::Scope<'s>, env: peregrine::exec::ExecEnvironment<'s, 'o>) where 'o: 's {
+                    debug_assert_eq!(OperationState::Waiting, self.state.load());
+
                     use peregrine::operation::OperationState;
                     use peregrine::ActivityLabel;
 

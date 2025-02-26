@@ -57,7 +57,7 @@ impl ToTokens for Model {
                     Self {
                         #(#timeline_names: peregrine::timeline::Timeline::<#resources, #name>::init(
                             time,
-                            bump.alloc(peregrine::operation::InitialConditionOp::<'o, #resources, #name>::new(time, inish_condish.#resource_idents))
+                            bump.alloc(peregrine::operation::initial_conditions::InitialConditionOp::<'o, #resources, #name>::new(time, inish_condish.#resource_idents))
                         ),)*
                     }
                 }
