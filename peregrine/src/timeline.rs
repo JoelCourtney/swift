@@ -1,21 +1,35 @@
 #![doc(hidden)]
 
 use crate::Model;
-use crate::operation::Upstream;
+use crate::operation::ungrounded::UngroundedUpstream;
+use crate::operation::{Node, NodeVec, Upstream};
 use crate::resource::Resource;
+use derive_more::Deref;
 use hifitime::TimeScale::TAI;
 use hifitime::{Duration, Epoch as Time};
-use std::collections::BTreeMap;
+use smallvec::SmallVec;
+use std::collections::btree_map::Range;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound::{Excluded, Unbounded};
 use std::ops::RangeBounds;
 
 pub trait HasTimeline<'o, R: Resource<'o>, M: Model<'o>> {
     fn find_child(&self, time: Duration) -> Option<&'o dyn Upstream<'o, R, M>>;
-    fn insert_operation(
+
+    fn insert_grounded(
         &mut self,
         time: Duration,
         op: &'o dyn Upstream<'o, R, M>,
     ) -> Option<&'o dyn Upstream<'o, R, M>>;
-    fn remove_operation(&mut self, time: Duration) -> Option<&'o dyn Upstream<'o, R, M>>;
+    fn remove_grounded(&mut self, time: Duration) -> Option<&'o dyn Node<'o, M>>;
+
+    fn insert_ungrounded(
+        &mut self,
+        min: Duration,
+        max: Duration,
+        op: &'o dyn UngroundedUpstream<'o, R, M>,
+    ) -> NodeVec<'o, M>;
+    fn remove_ungrounded(&mut self, min: Duration) -> Option<&'o dyn Node<'o, M>>;
 
     fn get_operations(
         &self,
@@ -44,7 +58,23 @@ where
     M::Timelines: HasTimeline<'o, R, M>,
 {
     grounded: BTreeMap<Duration, &'o dyn Upstream<'o, R, M>>,
-    // ungrounded: Vec<(Range<Duration>, &'o dyn UngroundedWriter<'o, R, M>)>,
+    ungrounded: BTreeMap<Duration, UngroundedMapEntry<'o, R, M>>,
+}
+
+#[derive(Deref)]
+struct UngroundedMapEntry<'o, R: Resource<'o>, M: Model<'o>> {
+    starts_here: &'o dyn UngroundedUpstream<'o, R, M>,
+    #[deref]
+    others_present: BTreeMap<Duration, &'o dyn UngroundedUpstream<'o, R, M>>,
+}
+
+impl<'o, R: Resource<'o>, M: Model<'o>> UngroundedMapEntry<'o, R, M> {
+    fn new(starts_here: &'o dyn UngroundedUpstream<'o, R, M>, ends: Duration) -> Self {
+        UngroundedMapEntry {
+            starts_here,
+            others_present: BTreeMap::from([(ends, starts_here)]),
+        }
+    }
 }
 
 impl<'o, R: Resource<'o>, M: Model<'o>> Timeline<'o, R, M>
@@ -57,7 +87,7 @@ where
     ) -> Timeline<'o, R, M> {
         Timeline {
             grounded: BTreeMap::from([(time, initial_condition)]),
-            // ungrounded: vec![],
+            ungrounded: BTreeMap::new(),
         }
     }
 
@@ -72,15 +102,8 @@ where
             .map(|(t, w)| (*t, *w))
     }
 
-    pub fn first_after(&self, time: Duration) -> Option<(Duration, &'o dyn Upstream<'o, R, M>)> {
-        self.grounded
-            .range(time..)
-            .next()
-            .map(move |(t, w)| (*t, *w))
-    }
-
     #[cfg(not(feature = "nightly"))]
-    pub fn insert(
+    pub fn insert_grounded(
         &mut self,
         time: Duration,
         value: &'o (dyn Upstream<'o, R, M>),
@@ -90,12 +113,12 @@ where
     }
 
     #[cfg(feature = "nightly")]
-    pub fn insert(
+    pub fn insert_grounded(
         &mut self,
         time: Duration,
         value: &'o dyn Upstream<'o, R, M>,
     ) -> Option<&'o dyn Upstream<'o, R, M>> {
-        let mut cursor_mut = self.grounded.upper_bound_mut(std::ops::Bound::Unbounded);
+        let mut cursor_mut = self.grounded.upper_bound_mut(Unbounded);
         if let Some((t, _)) = cursor_mut.peek_prev() {
             if *t < time {
                 cursor_mut.insert_after(time, value).unwrap();
@@ -106,8 +129,27 @@ where
         self.last_before(time).map(|(_, w)| w)
     }
 
-    pub fn remove(&mut self, time: Duration) -> Option<&'o dyn Upstream<'o, R, M>> {
+    pub fn remove_grounded(&mut self, time: Duration) -> Option<&'o dyn Upstream<'o, R, M>> {
         self.grounded.remove(&time)
+    }
+
+    pub fn insert_ungrounded(
+        &mut self,
+        min: Duration,
+        max: Duration,
+        value: &'o dyn UngroundedUpstream<'o, R, M>,
+    ) -> NodeVec<'o, M> {
+        let mut entry = UngroundedMapEntry::new(value, max);
+        entry.extend(
+            self.ungrounded
+                .range(..min)
+                .next_back()
+                .map(|(_, entry)| entry.range((Excluded(min), Unbounded)))
+                .unwrap_or(Range::default()),
+        );
+
+        self.ungrounded.insert(min, entry);
+        todo!()
     }
 
     pub fn range<'a>(

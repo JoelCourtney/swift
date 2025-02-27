@@ -11,18 +11,22 @@ use rayon::Scope;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-pub trait UngroundedUpstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Upstream<'o, R, M> {
-    fn ground_request<'s>(
+pub trait UngroundedUpstream<'o, R: Resource<'o>, M: Model<'o> + 'o>:
+    AsRef<dyn Upstream<'o, R, M>>
+{
+    fn request_grounding<'s>(
         &'o self,
         marker: usize,
         continuation: Continuation<'o, peregrine_grounding, M>,
         scope: &Scope<'s>,
         env: ExecEnvironment<'s, 'o>,
     );
-    fn upcast(&'o self) -> &'o dyn Upstream<'o, R, M>;
+
+    fn id(&self) -> u64;
 }
 
 use crate as peregrine;
+resource!(pub peregrine_delay: Duration);
 resource!(pub peregrine_grounding: GroundingResponse);
 
 #[derive(Copy, Clone, Eq, PartialEq, Serialize, Deserialize, Debug)]
@@ -105,7 +109,7 @@ where
 
         for (i, ungrounded) in self.ungrounded_upstreams[1..].iter().enumerate() {
             scope.spawn(move |s| {
-                ungrounded.ground_request(i, Continuation::Node(self), s, env.reset())
+                ungrounded.request_grounding(i, Continuation::Node(self), s, env.reset())
             });
         }
     }
@@ -151,13 +155,13 @@ where
                             } else {
                                 *decision = Some(Ok((
                                     ug.when,
-                                    self.ungrounded_upstreams[ug.marker].upcast(),
+                                    self.ungrounded_upstreams[ug.marker].as_ref(),
                                 )));
                             }
                         }
                         (Some(ug), None) => {
                             *decision =
-                                Some(Ok((ug.when, self.ungrounded_upstreams[ug.marker].upcast())))
+                                Some(Ok((ug.when, self.ungrounded_upstreams[ug.marker].as_ref())))
                         }
                         (None, Some(gr)) => *decision = Some(Ok(gr)),
                         _ => unreachable!(),
