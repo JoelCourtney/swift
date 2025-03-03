@@ -8,6 +8,7 @@ impl ToTokens for Model {
             visibility,
             name,
             resources,
+            ..
         } = self;
 
         let resource_idents = resources

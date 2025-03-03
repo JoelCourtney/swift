@@ -1,57 +1,67 @@
-use proc_macro2::{Ident, TokenStream};
+use crate::operation::{Context, Op};
+use proc_macro2::TokenStream;
 use quote::ToTokens;
-use syn::{Block, Expr, Stmt};
+use syn::{Expr, Path, Stmt};
 
 mod input;
-mod operation;
 mod output;
 
 pub fn process_activity(mut activity: Activity) -> TokenStream {
-    let name = activity.name.clone();
+    let path = activity.path.clone();
 
     for line in &mut activity.lines {
-        if let StmtOrOp::Op(op) = line {
-            op.activity = Some(name.clone());
+        if let StmtOrInvoke::Invoke(Invocation {
+            target: Target::Inline(op),
+            ..
+        }) = line
+        {
+            op.context = Context::Activity(path.clone());
         }
     }
 
     activity.into_token_stream()
 }
 
+#[derive(Debug)]
 pub struct Activity {
-    name: Ident,
-    lines: Vec<StmtOrOp>,
+    path: Path,
+    _structure: ActivityStructure,
+    lines: Vec<StmtOrInvoke>,
 }
 
-enum StmtOrOp {
+#[derive(Debug)]
+pub enum ActivityStructure {
+    Path,
+    Item,
+}
+
+#[derive(Debug)]
+enum StmtOrInvoke {
     Stmt(Stmt),
-    Op(Op),
+    Invoke(Invocation),
 }
 
-impl StmtOrOp {
-    fn is_op(&self) -> bool {
-        matches!(self, StmtOrOp::Op(_))
+#[derive(Debug)]
+struct Invocation {
+    time: Placement,
+    target: Target,
+}
+
+#[derive(Debug)]
+struct Placement {
+    start: Expr,
+    delay: Option<Op>,
+}
+
+impl StmtOrInvoke {
+    fn is_invoke(&self) -> bool {
+        matches!(self, StmtOrInvoke::Invoke(..))
     }
-    fn get_op(&self) -> Option<&Op> {
-        match self {
-            StmtOrOp::Stmt(_) => None,
-            StmtOrOp::Op(o) => Some(o),
-        }
-    }
 }
 
-struct Op {
-    activity: Option<Ident>,
-    reads: Vec<Ident>,
-    writes: Vec<Ident>,
-    read_writes: Vec<Ident>,
-    when: Expr,
-    // delay: Option<OpDelay>,
-    body: Block,
-    uuid: String,
+#[derive(Debug)]
+enum Target {
+    Inline(Op),
+    _Activity(Expr),
+    _Routine(Expr),
 }
-
-// struct OpDelay {
-//     reads: Vec<Ident>,
-//     delay: Expr,
-// }

@@ -11,40 +11,40 @@ resource!(c: u32);
 
 struct IncrementA;
 impl_activity! { for IncrementA
-    @(start) a -> a {
-        a += 1;
+    @(start) {
+        ref mut: a += 1;
     }
     Duration::ZERO
 }
 
 struct IncrementC;
 impl_activity! { for IncrementC
-    @(start) c -> c {
-        c += 1;
+    @(start) {
+        ref mut: c += 1;
     }
     Duration::ZERO
 }
 
 struct ConvertAToB;
 impl_activity! { for ConvertAToB
-    @(start) a -> b {
-        b = a.to_string()
+    @(start) {
+        mut:b = ref:a.to_string();
     }
     Duration::ZERO
 }
 
 struct ConvertBToA;
 impl_activity! { for ConvertBToA
-    @(start) b -> a {
-        a = b.parse()?;
+    @(start) {
+        mut:a = ref:b.parse()?;
     }
     Duration::ZERO
 }
 
 struct AddCToA;
 impl_activity! ( for AddCToA
-    @(start) a, c -> a {
-        a += c;
+    @(start) {
+        ref mut: a += ref:c;
     }
     Duration::ZERO
 );

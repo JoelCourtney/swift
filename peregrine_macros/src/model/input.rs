@@ -18,6 +18,7 @@ impl Parse for Model {
             visibility,
             name,
             resources: resources.collect(),
+            _sub_models: vec![],
         })
     }
 }

@@ -9,48 +9,48 @@ resource!(pub b: u32);
 
 pub struct IncrementA;
 impl_activity! { for IncrementA
-    @(start) a -> a {
-        a += 1;
+    @(start) {
+        ref mut: a += 1;
     }
     Duration::ZERO
 }
 
 pub struct IncrementB;
 impl_activity! { for IncrementB
-    @(start) b -> b {
-        b += 1;
+    @(start) {
+        ref mut: b += 1;
     }
     Duration::ZERO
 }
 
 pub struct SetBToA;
 impl_activity! { for SetBToA
-    @(start) a -> b {
-        b = a;
+    @(start) {
+        mut:b = ref:a;
     }
     Duration::ZERO
 }
 
 pub struct SetAToB;
 impl_activity! { for SetAToB
-    @(start) b -> a {
-        a = b;
+    @(start) {
+        mut:a = ref:b;
     }
     Duration::ZERO
 }
 
 pub struct AddBToA;
 impl_activity! { for AddBToA
-    @(start) a, b -> a {
-        a += b;
+    @(start) {
+        ref mut: a += ref:b;
     }
     Duration::ZERO
 }
 
 pub struct EvalCounter(Arc<AtomicU16>);
 impl_activity! { for EvalCounter
-    @(start) a -> a {
-        a = a;
+    @(start) {
+        mut:a = ref:a;
         self.0.fetch_add(1, Ordering::SeqCst);
     }
     Duration::ZERO

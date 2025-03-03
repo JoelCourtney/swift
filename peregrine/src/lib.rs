@@ -113,11 +113,11 @@
 //!     // This is syntactic sugar to declare an operation.
 //!     // It occurs at time `start`, reads both `sol_counter` and `downlink_buffer`,
 //!     // and writes to `downlink_buffer`.
-//!     @(start) sol_counter, downlink_buffer -> downlink_buffer {
+//!     @(start) {
 //!         if self.verbose {
-//!             downlink_buffer.push(format!("It is currently Sol {sol_counter}"));
+//!             ref mut: downlink_buffer.push(format!("It is currently Sol {}", ref:sol_counter));
 //!         } else {
-//!             downlink_buffer.push(format!("Sol {sol_counter}"));
+//!             ref mut: downlink_buffer.push(format!("Sol {}", ref:sol_counter));
 //!         }
 //!     }
 //!     Duration::ZERO // Return statement indicates the activity had zero duration
@@ -204,7 +204,6 @@
 
 #![cfg_attr(feature = "nightly", feature(btree_cursors))]
 
-use serde::{Deserialize, Serialize};
 use std::collections::{Bound, HashMap};
 use std::ops::RangeBounds;
 
@@ -252,8 +251,8 @@ pub use peregrine_macros::model;
 /// struct IncrementSol;
 ///
 /// impl_activity! { for IncrementSol
-///     @(start) sol_counter -> sol_counter {
-///         sol_counter += 1;
+///     @(start) {
+///         ref mut: sol_counter += 1;
 ///     }
 ///     Duration::ZERO // Return statement indicates the activity had zero duration
 /// }
@@ -268,13 +267,7 @@ pub use peregrine_macros::model;
 /// 3. Declare operation by starting a statement with `@`.
 ///    - `(start)` indicates the time the operation happens at. It can be any valid rust expression
 ///      that evaluates to a [Duration].
-///    - `sol: SolCounter` declares `SolCounter` as a resource read, available in the variable `sol`.
-///    - `-> sol` declares that the `SolCounter` is also a resource write. The `: SolCounter` type
-///      is implied, but you can write it explicitly if you want.
-///    - You can read and write to as many resources as you want in one operation, just declare them
-///      in a comma-separated list. Any write-only resources must have the explicit type tag.
-///      (e.g. `sol: SolCounter, buffer: DownlinkBuffer, temp: Temperature -> buffer, safe_mode: SafeMode`
-///      reads from `SolCounter` and `Temperature`, writes to `SafeMode`, and read-writes `DownlinkBuffer`.)
+///    - TODO explain ref mut
 ///    - The body of the operation can do whatever you want, as long as it is deterministic.
 ///      The body is also an async context; you could make a non-blocking web request if you want,
 ///      as long as it can be assumed to always return the same output for the same input.
@@ -285,6 +278,7 @@ pub use peregrine_macros::model;
 /// It would just be very un-hygienic and potentially hard to debug.
 pub use peregrine_macros::impl_activity;
 
+pub mod activity;
 pub mod exec;
 pub mod history;
 pub mod operation;
@@ -292,8 +286,10 @@ pub mod reexports;
 pub mod resource;
 pub mod timeline;
 
+pub use crate::activity::{Activity, ActivityId};
 use crate::exec::ExecEnvironment;
 pub use crate::history::History;
+use activity::Placement;
 pub use anyhow::{Context, Error, Result, anyhow, bail};
 use bumpalo_herd::{Herd, Member};
 pub use hifitime::{Duration, Epoch as Time};
@@ -384,7 +380,8 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
         let bump = self.session.herd.get();
         let activity = bump.alloc(activity);
         let activity_pointer = activity as *mut dyn Activity<'o, M>;
-        let (_duration, operations) = activity.decompose(time, &self.timelines, &bump)?;
+        let (_duration, operations) =
+            activity.decompose(Placement::Grounded(time), &self.timelines, &bump)?;
 
         for op in &operations {
             op.insert_self(&mut self.timelines)?;
@@ -463,7 +460,11 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
             for node in nodes.drain(..) {
                 let (sender, receiver) = oneshot::channel();
                 receivers.push((node.0, receiver));
-                scope.spawn(move |s| node.1.request(Continuation::Root(sender), s, env.reset()));
+                let timelines = &self.timelines;
+                scope.spawn(move |s| {
+                    node.1
+                        .request(Continuation::Root(sender), s, timelines, env.reset())
+                });
             }
         });
 
@@ -507,28 +508,4 @@ pub trait Model<'o>: Sync {
     type Timelines: Send + Sync + for<'a> From<(Duration, &'a Member<'o>, Self::InitialConditions)>;
 
     fn init_history(history: &History);
-}
-
-/// An activity, which decomposes into a statically-known set of operations. Implemented
-/// with the [impl_activity] macro.
-pub trait Activity<'o, M: Model<'o>>: Send + Sync {
-    fn decompose(
-        &'o self,
-        start: Time,
-        timelines: &M::Timelines,
-        bump: &Member<'o>,
-    ) -> Result<(Duration, Vec<&'o dyn Node<'o, M>>)>;
-}
-
-pub trait ActivityLabel {
-    const LABEL: &'static str;
-}
-
-/// A unique activity ID.
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Debug)]
-pub struct ActivityId(u32);
-impl ActivityId {
-    pub fn new(id: u32) -> ActivityId {
-        ActivityId(id)
-    }
 }

@@ -1,6 +1,6 @@
 use crate::exec::ExecEnvironment;
 use crate::operation::{
-    Continuation, Downstream, InternalResult, Node, NodeVec, ObservedErrorOutput, Upstream,
+    Continuation, Downstream, InternalResult, Node, ObservedErrorOutput, Upstream,
 };
 use crate::resource::Resource;
 use crate::timeline::HasTimeline;
@@ -17,6 +17,7 @@ pub trait UngroundedUpstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Upstream<'
         marker: usize,
         continuation: Continuation<'o, peregrine_grounding, M>,
         scope: &Scope<'s>,
+        timelines: &M::Timelines,
         env: ExecEnvironment<'s, 'o>,
     );
     fn upcast(&'o self) -> &'o dyn Upstream<'o, R, M>;
@@ -33,7 +34,7 @@ pub struct GroundingResponse {
 
 pub struct UngroundedUpstreamResolver<'o, R: Resource<'o>, M: Model<'o>> {
     time: Duration,
-    downstream: &'o dyn Node<'o, M>,
+    downstream: &'o dyn Downstream<'o, R, M>,
     ungrounded_upstreams: SmallVec<&'o dyn UngroundedUpstream<'o, R, M>, 1>,
     grounding_responses: Mutex<SmallVec<InternalResult<GroundingResponse>, 1>>,
     grounded_upstream: Option<(Duration, &'o dyn Upstream<'o, R, M>)>,
@@ -47,18 +48,6 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Node<'o, M> for UngroundedUpstreamResolv
 where
     M::Timelines: HasTimeline<'o, R, M>,
 {
-    fn find_upstreams(&'o self, _time_of_change: Duration, _timelines: &M::Timelines) {
-        todo!()
-    }
-
-    fn add_downstream(&self, _parent: &'o dyn Node<'o, M>) {
-        unreachable!()
-    }
-
-    fn remove_downstream(&self, _parent: &dyn Node<'o, M>) {
-        unreachable!()
-    }
-
     fn insert_self(&'o self, _timelines: &mut M::Timelines) -> anyhow::Result<()> {
         unreachable!()
     }
@@ -67,12 +56,13 @@ where
         unreachable!()
     }
 
-    fn clear_cache(&self) -> bool {
-        self.cached_decision.lock().take().is_some()
+    fn clear_cache(&self) {
+        *self.cached_decision.lock() = None;
+        self.downstream.clear_cache();
     }
 
-    fn downstreams(&self) -> NodeVec<'o, M> {
-        NodeVec::from([self.downstream])
+    fn notify_downstreams(&self, time_of_change: Duration) {
+        self.downstream.clear_upstream(Some(time_of_change));
     }
 }
 
@@ -84,6 +74,7 @@ where
         &'o self,
         continuation: Continuation<'o, R, M>,
         scope: &Scope<'s>,
+        timelines: &'s M::Timelines,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's,
@@ -91,8 +82,10 @@ where
         let decision = self.cached_decision.lock();
         if let Some(r) = *decision {
             match r {
-                Ok((_, u)) => u.request(continuation, scope, env.increment()),
-                Err(_) => continuation.run(Err(ObservedErrorOutput), scope, env.increment()),
+                Ok((_, u)) => u.request(continuation, scope, timelines, env.increment()),
+                Err(_) => {
+                    continuation.run(Err(ObservedErrorOutput), scope, timelines, env.increment())
+                }
             }
             return;
         }
@@ -105,7 +98,7 @@ where
 
         for (i, ungrounded) in self.ungrounded_upstreams[1..].iter().enumerate() {
             scope.spawn(move |s| {
-                ungrounded.ground_request(i, Continuation::Node(self), s, env.reset())
+                ungrounded.ground_request(i, Continuation::Node(self), s, timelines, env.reset())
             });
         }
     }
@@ -120,6 +113,7 @@ where
         &'o self,
         value: InternalResult<(u64, GroundingResponse)>,
         scope: &Scope<'s>,
+        timelines: &'s M::Timelines,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's,
@@ -136,7 +130,7 @@ where
             match folded_result {
                 Err(_) => {
                     *decision = Some(Err(ObservedErrorOutput));
-                    continuation.run(Err(ObservedErrorOutput), scope, env.increment());
+                    continuation.run(Err(ObservedErrorOutput), scope, timelines, env.increment());
                 }
                 Ok(vec) => {
                     let earliest_ungrounded = vec
@@ -163,13 +157,18 @@ where
                         _ => unreachable!(),
                     }
 
-                    decision
-                        .unwrap()
-                        .unwrap()
-                        .1
-                        .request(continuation, scope, env.increment());
+                    decision.unwrap().unwrap().1.request(
+                        continuation,
+                        scope,
+                        timelines,
+                        env.increment(),
+                    );
                 }
             }
         }
+    }
+
+    fn clear_upstream(&self, _time_of_change: Option<Duration>) -> bool {
+        unreachable!()
     }
 }

@@ -10,9 +10,9 @@ pub struct RechargePotato {
 
 impl_activity! { for RechargePotato
     let end = start + Duration::from_hours(1.0);
-    @(end) battery -> battery, mode {
-        battery += 4.0;
-        mode = "help".to_string();
+    @(end) {
+        ref mut: battery += 4.0;
+        mut: mode = "help".to_string();
     }
     Duration::ZERO
 }

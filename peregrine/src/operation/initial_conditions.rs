@@ -1,7 +1,7 @@
 use crate::Model;
 use crate::exec::ExecEnvironment;
 use crate::history::PeregrineDefaultHashBuilder;
-use crate::operation::{Continuation, Node, NodeVec, Upstream};
+use crate::operation::{Continuation, DownstreamVec, Node, Upstream};
 use crate::resource::Resource;
 use crate::timeline::HasTimeline;
 use anyhow::anyhow;
@@ -16,7 +16,7 @@ where
 {
     value: R::Write,
     result: RwLock<Option<(u64, R::Read)>>,
-    downstreams: Mutex<NodeVec<'o, M>>,
+    downstreams: Mutex<DownstreamVec<'o, R, M>>,
     _time: Duration,
 }
 
@@ -28,7 +28,7 @@ where
         Self {
             value,
             result: RwLock::new(None),
-            downstreams: Mutex::new(NodeVec::new()),
+            downstreams: Mutex::new(DownstreamVec::new()),
             _time: time,
         }
     }
@@ -38,20 +38,6 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Node<'o, M> for InitialConditionOp<'o, R
 where
     M::Timelines: HasTimeline<'o, R, M>,
 {
-    fn find_upstreams(&'o self, _time_of_change: Duration, _timelines: &M::Timelines) {
-        unreachable!()
-    }
-
-    fn add_downstream(&self, parent: &'o dyn Node<'o, M>) {
-        self.downstreams.lock().push(parent);
-    }
-
-    fn remove_downstream(&self, parent: &dyn Node<'o, M>) {
-        self.downstreams
-            .lock()
-            .retain(|p| !std::ptr::eq(*p, parent));
-    }
-
     fn insert_self(&'o self, _timelines: &mut M::Timelines) -> anyhow::Result<()> {
         unreachable!()
     }
@@ -60,12 +46,14 @@ where
         Err(anyhow!("Cannot remove initial conditions."))
     }
 
-    fn clear_cache(&self) -> bool {
+    fn clear_cache(&self) {
         unreachable!()
     }
 
-    fn downstreams(&self) -> NodeVec<'o, M> {
-        self.downstreams.lock().clone()
+    fn notify_downstreams(&self, time_of_change: Duration) {
+        for downstream in self.downstreams.lock().drain(..) {
+            downstream.clear_upstream(Some(time_of_change));
+        }
     }
 }
 
@@ -77,6 +65,7 @@ where
         &'o self,
         continuation: Continuation<'o, R, M>,
         scope: &Scope<'s>,
+        timelines: &'s M::Timelines,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's,
@@ -98,6 +87,10 @@ where
             self.result.read()
         };
 
-        continuation.run(Ok(read.unwrap()), scope, env.increment());
+        if let Some(d) = continuation.get_downstream() {
+            self.downstreams.lock().push(d);
+        }
+
+        continuation.run(Ok(read.unwrap()), scope, timelines, env.increment());
     }
 }

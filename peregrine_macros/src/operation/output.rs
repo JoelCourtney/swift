@@ -1,10 +1,9 @@
-use crate::activity::Op;
+use crate::operation::{Context, Op};
 use proc_macro2::{Ident, TokenStream};
-use quote::{ToTokens, TokenStreamExt, format_ident, quote};
-use syn::Expr;
+use quote::{ToTokens, format_ident, quote};
 
 impl Op {
-    pub(crate) fn body_function(&self) -> TokenStream {
+    pub fn body_function(&self) -> TokenStream {
         let Idents {
             all_reads,
             all_writes,
@@ -28,7 +27,7 @@ impl Op {
 
     fn make_idents(&self) -> Idents {
         let Op {
-            activity,
+            context,
             reads,
             writes,
             read_writes,
@@ -36,21 +35,29 @@ impl Op {
             ..
         } = self;
 
-        let activity = activity.clone().expect("activity name was not set");
+        let activity = if let Context::Activity(p) = context {
+            p.clone()
+        } else {
+            todo!()
+        };
 
-        let output = format_ident!("{activity}OpOutput_{uuid}");
-        let op = format_ident!("{activity}Op_{uuid}");
-        let op_relationships = format_ident!("{activity}OpRelationships_{uuid}");
-        let op_body_function = format_ident!("{activity}_op_body_{uuid}");
-        let continuations = format_ident!("{activity}Continuations_{uuid}");
+        let activity_ident = activity.get_ident().unwrap();
+
+        let output = format_ident!("{activity_ident}OpOutput_{uuid}");
+        let op = format_ident!("{activity_ident}Op_{uuid}");
+        let op_relationships = format_ident!("{activity_ident}OpRelationships_{uuid}");
+        let op_body_function = format_ident!("{activity_ident}_op_body_{uuid}");
+        let continuations = format_ident!("{activity_ident}Continuations_{uuid}");
+        let downstreams_enum = format_ident!("{activity_ident}Downstreams_{uuid}");
 
         Idents {
             op_relationships,
             op,
             output,
             continuations,
+            downstreams_enum,
             op_body_function,
-            activity,
+            activity: activity_ident.clone(),
             write_onlys: writes.clone(),
             read_writes: read_writes.clone(),
             all_reads: reads.iter().chain(read_writes.iter()).cloned().collect(),
@@ -68,9 +75,17 @@ impl Op {
 impl ToTokens for Op {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let idents = self.make_idents();
+        let definition = generate_operation(&idents);
+        let instantiation = result(&idents);
 
-        let result = process_operation(idents, &self.when);
-        tokens.append_all(result);
+        let result = quote! {
+            {
+                #definition
+                #instantiation
+            }
+        };
+
+        tokens.extend(result);
     }
 }
 
@@ -80,28 +95,13 @@ struct Idents {
     output: Ident,
     op_body_function: Ident,
     continuations: Ident,
+    downstreams_enum: Ident,
     activity: Ident,
     write_onlys: Vec<Ident>,
     read_writes: Vec<Ident>,
     all_reads: Vec<Ident>,
     all_writes: Vec<Ident>,
     all_resources: Vec<Ident>,
-}
-
-fn process_operation(idents: Idents, when: &Expr) -> TokenStream {
-    let op = generate_operation(&idents);
-
-    let output_struct = generate_output(&idents);
-
-    let result = result(&idents, when);
-
-    quote! {
-        {
-            #op
-            #output_struct
-            #result
-        }
-    }
 }
 
 fn generate_operation(idents: &Idents) -> TokenStream {
@@ -111,6 +111,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         output,
         op_body_function,
         continuations,
+        downstreams_enum,
         activity,
         all_reads,
         all_writes,
@@ -141,8 +142,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
 
     quote! {
         struct #op_relationships<'o, M: peregrine::Model<'o>> {
-            downstreams: peregrine::operation::NodeVec<'o, M>,
-            #(#all_reads: &'o dyn peregrine::operation::Upstream<'o, #all_reads, M>,)*
+            #(#all_reads: Option<&'o dyn peregrine::operation::Upstream<'o, #all_reads, M>>,)*
             #(#all_read_responses: peregrine::operation::InternalResult<(u64, <#all_reads as peregrine::resource::Resource<'o>>::Read)>,)*
         }
 
@@ -152,8 +152,14 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             relationships: peregrine::reexports::parking_lot::Mutex<#op_relationships<'o, M>>,
             activity: &'o #activity,
             time: peregrine::Duration,
-            continuations: peregrine::reexports::parking_lot::Mutex<peregrine::reexports::smallvec::SmallVec<#continuations<'o, M>, 1>>,
+            continuations: peregrine::reexports::parking_lot::Mutex<peregrine::operation::RecordedQueue<#continuations<'o, M>, #downstreams_enum<'o, M>>>,
             response_counter: peregrine::reexports::crossbeam::atomic::AtomicCell<u8>
+        }
+
+        #[derive(Copy, Clone, Default)]
+        struct #output<'h> {
+            hash: u64,
+            #(#all_writes: <#all_writes as peregrine::resource::Resource<'h>>::Read,)*
         }
 
         #[allow(non_camel_case_types)]
@@ -161,51 +167,70 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             #(#all_writes(peregrine::operation::Continuation<'o, #all_writes, M>),)*
         }
 
+        enum #downstreams_enum<'o, M: peregrine::Model<'o>> {
+            #(#all_writes(&'o dyn peregrine::operation::Downstream<'o, #all_writes, M>),)*
+        }
+
         impl<'s, 'o: 's, M: peregrine::Model<'o>> #op<'o, M> where #timelines_bound {
-            fn run_continuations(&self, scope: &peregrine::reexports::rayon::Scope<'s>, env: peregrine::exec::ExecEnvironment<'s, 'o>) {
+            fn run_continuations(&self, scope: &peregrine::reexports::rayon::Scope<'s>, timelines: &'s M::Timelines, env: peregrine::exec::ExecEnvironment<'s, 'o>) {
                 let result = unsafe {
                     *self.result.get()
                 };
-                let mut continuations = {
-                    let mut result = peregrine::reexports::smallvec::SmallVec::new();
-                    let mut lock = self.continuations.lock();
-                    std::mem::swap(&mut result, &mut lock);
-                    result
-                };
+                let mut continuations = self.continuations.lock();
 
-                if !continuations.is_empty() {
+                if !continuations.new.is_empty() {
                     let start_index = if env.stack_counter < peregrine::exec::STACK_LIMIT { 1 } else { 0 };
 
-                    for c in continuations.drain(start_index..) {
+                    let mut swapped_continuations = peregrine::reexports::smallvec::SmallVec::new();
+                    std::mem::swap(&mut continuations.new, &mut swapped_continuations);
+
+                    for c in swapped_continuations.drain(start_index..) {
                         match c {
-                            #(#continuations::#all_writes(c) => scope.spawn(move |s| c.run(result.map(|r| (r.hash, r.#all_writes)), s, env.reset()) ),)*
+                            #(#continuations::#all_writes(c) => {
+                                if let Some(d) = c.get_downstream() {
+                                    continuations.old.push(#downstreams_enum::#all_writes(d));
+                                }
+                                scope.spawn(move |s| c.run(result.map(|r| (r.hash, r.#all_writes)), s, timelines, env.reset()));
+                            })*
                         }
                     }
 
                     if env.stack_counter < peregrine::exec::STACK_LIMIT {
-                        match continuations.remove(0) {
-                            #(#continuations::#all_writes(c) => c.run(result.map(|r| (r.hash, r.#all_writes)), scope, env.increment()),)*
+                        match swapped_continuations.remove(0) {
+                            #(#continuations::#all_writes(c) => {
+                                if let Some(d) = c.get_downstream() {
+                                    continuations.old.push(#downstreams_enum::#all_writes(d));
+                                }
+                                c.run(result.map(|r| (r.hash, r.#all_writes)), scope, timelines, env.increment());
+                            })*
                         }
                     }
                 }
             }
 
-            fn send_requests(&'o self, mut relationships: peregrine::reexports::parking_lot::MutexGuard<'o, #op_relationships<'o, M>>, scope: &peregrine::reexports::rayon::Scope<'s>, env: peregrine::exec::ExecEnvironment<'s, 'o>) {
+            fn send_requests(&'o self, mut relationships: peregrine::reexports::parking_lot::MutexGuard<'o, #op_relationships<'o, M>>, scope: &peregrine::reexports::rayon::Scope<'s>, timelines: &'s M::Timelines, env: peregrine::exec::ExecEnvironment<'s, 'o>) {
+                #(
+                    if relationships.#all_reads.is_none() {
+                        relationships.#all_reads = Some(<M::Timelines as peregrine::timeline::HasTimeline<'o, #all_reads, M>>::find_child(timelines, self.time)
+                            .expect("Could not find an upstream node. Did you insert before the initial conditions?"));
+                    }
+                )*
                 let (#(#all_reads,)*) = (#(relationships.#all_reads,)*);
                 drop(relationships);
 
                 self.response_counter.store(#num_reads);
-                #(scope.spawn(move |s| #all_but_one_read.request(peregrine::operation::Continuation::Node(self), s, env.reset()));)*
+                #(scope.spawn(move |s| #all_but_one_read.unwrap().request(peregrine::operation::Continuation::Node(self), s, timelines, env.reset()));)*
 
                 if env.stack_counter < peregrine::exec::STACK_LIMIT {
-                    #first_read.request(peregrine::operation::Continuation::Node(self), scope, env.increment());
+                    #first_read.unwrap().request(peregrine::operation::Continuation::Node(self), scope, timelines, env.increment());
                 } else {
-                    scope.spawn(move |s| #first_read.request(peregrine::operation::Continuation::Node(self), s, env.increment()));
+                    scope.spawn(move |s| #first_read.unwrap().request(peregrine::operation::Continuation::Node(self), s, timelines, env.increment()));
                 }
             }
 
             fn run(&'o self, relationships_lock: peregrine::reexports::parking_lot::MutexGuard<'o, #op_relationships<'o, M>>, env: peregrine::exec::ExecEnvironment<'s, 'o>) -> peregrine::operation::InternalResult<#output<'o>> {
-                use peregrine::{ActivityLabel, Context};
+                use peregrine::Context;
+                use peregrine::activity::ActivityLabel;
 
                 let (#((#all_read_response_hashes, #all_reads),)*) = (#(relationships_lock.#all_read_responses?,)*);
                 drop(relationships_lock);
@@ -229,6 +254,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                     })
                 } else {
                     use peregrine::{Activity, Context};
+                    use peregrine::activity::ActivityLabel;
                     self.activity.#op_body_function(#(#all_reads,)*)
                         .with_context(|| format!("occurred in activity {} at {}", #activity::LABEL, self.time))
                         .map(|(#(#all_writes,)*)| #output {
@@ -246,49 +272,12 @@ fn generate_operation(idents: &Idents) -> TokenStream {
 
         impl<'o, M: peregrine::Model<'o>> peregrine::operation::Node<'o, M> for #op<'o, M>
         where #timelines_bound {
-            fn find_upstreams(&'o self, time_of_change: peregrine::Duration, timelines: &M::Timelines) {
-                if time_of_change >= self.time { return; }
-
-                let mut changed = false;
-
-                let mut lock = self.relationships.lock();
-                #(
-                    let new_child = <M::Timelines as peregrine::timeline::HasTimeline<'o, #all_reads, M>>::find_child(timelines, self.time).expect("unreachable; could not find a child that was previously there.");
-                    if !std::ptr::eq(new_child, lock.#all_reads) {
-                        lock.#all_reads.remove_downstream(self);
-                        new_child.add_downstream(self);
-                        lock.#all_reads = new_child;
-                        changed = true;
-                    }
-                )*
-
-                drop(lock);
-
-                if changed {
-                    let mut queue = std::collections::VecDeque::<&'o dyn peregrine::operation::Node<'o, M>>::new();
-                    queue.push_back(self);
-                    while let Some(op) = queue.pop_front() {
-                        if op.clear_cache() {
-                            queue.extend(op.downstreams());
-                        }
-                    }
-                }
-            }
-            fn add_downstream(&self, downstream: &'o dyn peregrine::operation::Node<'o, M>) {
-                self.relationships.lock().downstreams.push(downstream);
-            }
-            fn remove_downstream(&self, downstream: &dyn peregrine::operation::Node<'o, M>) {
-                self.relationships.lock().downstreams.retain(|p| !std::ptr::eq(*p, downstream));
-            }
-
             fn insert_self(&'o self, timelines: &mut M::Timelines) -> peregrine::Result<()> {
                 #(
                     let previous = <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::insert_operation(timelines, self.time, self)
                         .ok_or_else(|| peregrine::anyhow!("Could not find an upstream node. Did you insert before the initial conditions?"))?;
-                    previous.notify_downstreams(self.time, timelines);
+                    previous.notify_downstreams(self.time);
                 )*
-                let lock = self.relationships.lock();
-                #(lock.#all_reads.add_downstream(self);)*
                 Ok(())
             }
             fn remove_self(&self, timelines: &mut M::Timelines) -> peregrine::Result<()> {
@@ -298,34 +287,63 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                         peregrine::bail!("Removal failed; could not find self at the expected time.")
                     }
                 )*
-                self.notify_downstreams(self.time, timelines);
-                let lock = self.relationships.lock();
-                #(lock.#all_reads.remove_downstream(self);)*
+
+                let mut lock = self.continuations.lock();
+                assert!(lock.new.is_empty());
+                for downstream in lock.old.drain(..) {
+                    match downstream {
+                        #(#downstreams_enum::#all_writes(d) => {
+                            d.clear_upstream(None);
+                        })*
+                    }
+                }
+
                 Ok(())
             }
 
-            fn downstreams(&self) -> peregrine::operation::NodeVec<'o, M> {
-                self.relationships.lock().downstreams.clone()
-            }
-            fn clear_cache(&self) -> bool {
+            fn clear_cache(&self) {
                 use peregrine::operation::OperationState;
 
                 match self.state.swap(OperationState::Dormant) {
-                    OperationState::Dormant => false,
-                    OperationState::Done => true,
+                    OperationState::Dormant => {}
+                    OperationState::Done => {
+                        let mut continuations_lock = self.continuations.lock();
+                        assert!(continuations_lock.new.is_empty());
+                        for downstream in continuations_lock.old.drain(..) {
+                            match downstream {
+                                #(#downstreams_enum::#all_writes(d) => d.clear_cache(),)*
+                            }
+                        }
+                    },
                     OperationState::Waiting => unreachable!()
                 }
+            }
+
+            fn notify_downstreams(&self, time_of_change: peregrine::Duration) {
+                let mut lock = self.continuations.lock();
+                assert!(lock.new.is_empty());
+                lock.old.retain(|downstream| {
+                    match downstream {
+                        #(#downstreams_enum::#all_writes(d) => d.clear_upstream(Some(time_of_change)),)*
+                    }
+                })
             }
         }
 
         #(
             impl<'o, M: peregrine::Model<'o>> peregrine::operation::Downstream<'o, #all_reads, M> for #op<'o, M>
             where #timelines_bound {
-                fn respond<'s>(&'o self, value: peregrine::operation::InternalResult<(u64, <#all_reads as peregrine::resource::Resource<'o>>::Read)>, scope: &peregrine::reexports::rayon::Scope<'s>, env: peregrine::exec::ExecEnvironment<'s, 'o>) where 'o: 's {
+                fn respond<'s>(
+                    &'o self,
+                    value: peregrine::operation::InternalResult<(u64, <#all_reads as peregrine::resource::Resource<'o>>::Read)>,
+                    scope: &peregrine::reexports::rayon::Scope<'s>,
+                    timelines: &'s M::Timelines,
+                    env: peregrine::exec::ExecEnvironment<'s, 'o>
+                ) where 'o: 's {
                     debug_assert_eq!(OperationState::Waiting, self.state.load());
 
                     use peregrine::operation::OperationState;
-                    use peregrine::ActivityLabel;
+                    use peregrine::activity::ActivityLabel;
 
                     let mut relationships_lock = self.relationships.lock();
                     relationships_lock.#all_read_responses = value;
@@ -341,7 +359,20 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                         // with some contention than to accidentally leave a continuation due to race conditions.
                         self.state.store(OperationState::Done);
 
-                        self.run_continuations(scope, env);
+                        self.run_continuations(scope, timelines, env);
+                    }
+                }
+
+                fn clear_upstream(&self, time_of_change: Option<peregrine::Duration>) -> bool {
+                    use peregrine::operation::Node;
+
+                    if time_of_change.map(|d| d < self.time).unwrap_or(true) {
+                        let mut relationships = self.relationships.lock();
+                        relationships.#all_reads = None;
+                        self.clear_cache();
+                        true
+                    } else {
+                        false
                     }
                 }
             }
@@ -350,19 +381,25 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         #(
             impl<'o, M: peregrine::Model<'o>> peregrine::operation::Upstream<'o, #all_writes, M> for #op<'o, M>
             where #timelines_bound {
-                fn request<'s>(&'o self, continuation: peregrine::operation::Continuation<'o, #all_writes, M>, scope: &peregrine::reexports::rayon::Scope<'s>, env: peregrine::exec::ExecEnvironment<'s, 'o>) where 'o: 's {
+                fn request<'s>(
+                    &'o self,
+                    continuation: peregrine::operation::Continuation<'o, #all_writes, M>,
+                    scope: &peregrine::reexports::rayon::Scope<'s>,
+                    timelines: &'s M::Timelines,
+                    env: peregrine::exec::ExecEnvironment<'s, 'o>
+                ) where 'o: 's {
                     use peregrine::operation::OperationState;
 
-                    self.continuations.lock().push(#continuations::#all_writes(continuation));
+                    self.continuations.lock().new.push(#continuations::#all_writes(continuation));
 
                     match self.state.load() {
                         OperationState::Done => {
-                            self.run_continuations(scope, env);
+                            self.run_continuations(scope, timelines, env);
                         }
                         OperationState::Dormant => {
                             if let Some(relationships) = self.relationships.try_lock() {
                                 self.state.store(OperationState::Waiting);
-                                self.send_requests(relationships, scope, env);
+                                self.send_requests(relationships, scope, timelines, env);
                             }
                         }
                         OperationState::Waiting => {}
@@ -373,21 +410,7 @@ fn generate_operation(idents: &Idents) -> TokenStream {
     }
 }
 
-fn generate_output(idents: &Idents) -> TokenStream {
-    let Idents {
-        all_writes, output, ..
-    } = idents;
-
-    quote! {
-        #[derive(Copy, Clone, Default)]
-        struct #output<'h> {
-            hash: u64,
-            #(#all_writes: <#all_writes as peregrine::resource::Resource<'h>>::Read,)*
-        }
-    }
-}
-
-fn result(idents: &Idents, when: &Expr) -> TokenStream {
+fn result(idents: &Idents) -> TokenStream {
     let Idents {
         op,
         op_relationships,
@@ -402,28 +425,18 @@ fn result(idents: &Idents, when: &Expr) -> TokenStream {
 
     quote! {
         {
-            let when = peregrine::timeline::epoch_to_duration(#when);
-
-            let op = bump.alloc(#op {
+            |time| #op {
                 state: peregrine::reexports::crossbeam::atomic::AtomicCell::new(peregrine::operation::OperationState::Dormant),
                 result: peregrine::operation::UnsyncUnsafeCell::new(Err(peregrine::operation::ObservedErrorOutput)),
-                continuations: Default::default(),
+                continuations: peregrine::reexports::parking_lot::Mutex::new(peregrine::operation::RecordedQueue::new()),
                 response_counter: peregrine::reexports::crossbeam::atomic::AtomicCell::new(0),
                 activity: &self,
                 relationships: peregrine::reexports::parking_lot::Mutex::new(#op_relationships {
-                    downstreams: peregrine::operation::NodeVec::new(),
-                    #(
-                        #all_reads: <M::Timelines as peregrine::timeline::HasTimeline<#all_reads, M>>::find_child(
-                            timelines,
-                            when
-                        ).ok_or_else(|| peregrine::anyhow!("Could not find upstream node. Did you insert before the initial conditions?"))?,
-                    )*
+                    #(#all_reads: None,)*
                     #(#all_read_responses: Err(peregrine::operation::ObservedErrorOutput),)*
                 }),
-                time: when,
-            });
-
-            operations.push(op);
+                time,
+            }
         }
     }
 }

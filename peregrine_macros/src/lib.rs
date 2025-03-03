@@ -1,23 +1,23 @@
 use syn::parse_macro_input;
 
 use crate::activity::{Activity, process_activity};
-use crate::model::{Model, process_model};
+use crate::model::Model;
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 
 mod activity;
 mod model;
+mod operation;
 
 #[proc_macro]
 pub fn model(input: TokenStream) -> TokenStream {
     let model = parse_macro_input!(input as Model);
-    process_model(model).into()
+    model.into_token_stream().into()
 }
 
-/// Implements the `Activity` type for a
 #[proc_macro]
 pub fn impl_activity(input: TokenStream) -> TokenStream {
-    let activity = parse_macro_input!(input as Activity);
+    let activity: Activity = syn::parse(input).unwrap();
     process_activity(activity).into()
 }
 

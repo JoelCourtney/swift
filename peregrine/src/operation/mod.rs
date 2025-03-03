@@ -20,21 +20,12 @@ use std::fmt::{Debug, Display, Formatter};
 pub type InternalResult<T> = Result<T, ObservedErrorOutput>;
 
 pub trait Node<'o, M: Model<'o> + 'o>: Sync {
-    fn find_upstreams(&'o self, time_of_change: Duration, timelines: &M::Timelines);
-    fn add_downstream(&self, node: &'o dyn Node<'o, M>);
-    fn remove_downstream(&self, node: &dyn Node<'o, M>);
-
     fn insert_self(&'o self, timelines: &mut M::Timelines) -> Result<()>;
     fn remove_self(&self, timelines: &mut M::Timelines) -> Result<()>;
 
-    fn clear_cache(&self) -> bool;
+    fn clear_cache(&self);
 
-    fn downstreams(&self) -> NodeVec<'o, M>;
-    fn notify_downstreams(&self, time_of_change: Duration, timelines: &M::Timelines) {
-        for node in self.downstreams() {
-            node.find_upstreams(time_of_change, timelines);
-        }
-    }
+    fn notify_downstreams(&self, time_of_change: Duration);
 }
 
 pub trait Downstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
@@ -42,9 +33,12 @@ pub trait Downstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
         &'o self,
         value: InternalResult<(u64, R::Read)>,
         scope: &Scope<'s>,
+        timelines: &'s M::Timelines,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's;
+
+    fn clear_upstream(&self, time_of_change: Option<Duration>) -> bool;
 }
 
 pub trait Upstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
@@ -52,6 +46,7 @@ pub trait Upstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
         &'o self,
         continuation: Continuation<'o, R, M>,
         scope: &Scope<'s>,
+        timelines: &'s M::Timelines,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's;
@@ -67,13 +62,41 @@ impl<'o, R: Resource<'o>, M: Model<'o> + 'o> Continuation<'o, R, M> {
         self,
         value: InternalResult<(u64, R::Read)>,
         scope: &Scope<'s>,
+        timelines: &'s M::Timelines,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's,
     {
         match self {
-            Continuation::Node(n) => n.respond(value, scope, env),
+            Continuation::Node(n) => n.respond(value, scope, timelines, env),
             Continuation::Root(s) => s.send(value.map(|r| r.1)).unwrap(),
+        }
+    }
+
+    pub fn get_downstream(&self) -> Option<&'o dyn Downstream<'o, R, M>> {
+        match &self {
+            Continuation::Node(n) => Some(*n),
+            Continuation::Root(_) => None,
+        }
+    }
+}
+
+pub struct RecordedQueue<N, O> {
+    pub new: SmallVec<N, 1>,
+    pub old: SmallVec<O, 1>,
+}
+
+impl<N, O> Default for RecordedQueue<N, O> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<N, O> RecordedQueue<N, O> {
+    pub fn new() -> Self {
+        Self {
+            new: SmallVec::new(),
+            old: SmallVec::new(),
         }
     }
 }
@@ -96,6 +119,7 @@ impl Display for ObservedErrorOutput {
 }
 
 pub type NodeVec<'o, M> = SmallVec<&'o dyn Node<'o, M>, 2>;
+pub type DownstreamVec<'o, R, M> = SmallVec<&'o dyn Downstream<'o, R, M>, 2>;
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone)]
 pub enum OperationState {
