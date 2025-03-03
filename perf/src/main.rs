@@ -1,5 +1,5 @@
 use peregrine::reexports::hifitime::{TimeScale, TimeUnits};
-use peregrine::{Duration, Session, Time, impl_activity, model, resource};
+use peregrine::{Duration, Session, Time, impl_activity, initial_conditions, model, resource};
 
 model! {
     pub Perf(a, b, c)
@@ -56,7 +56,7 @@ async fn main() -> peregrine::Result<()> {
     let plan_start = Time::now()?.to_time_scale(TimeScale::TAI);
     let mut plan = session.new_plan::<Perf>(
         plan_start,
-        PerfInitialConditions {
+        initial_conditions! {
             a: 0,
             b: "".to_string(),
             c: 0,

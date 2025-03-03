@@ -4,6 +4,7 @@ use crate::activity::{Activity, process_activity};
 use crate::model::Model;
 use proc_macro::TokenStream;
 use quote::{ToTokens, quote};
+use rand::Rng;
 
 mod activity;
 mod model;
@@ -26,4 +27,10 @@ pub fn code_to_str(input: TokenStream) -> TokenStream {
     let string = input.to_string();
     let trimmed = string.trim();
     quote! { #trimmed }.into()
+}
+
+#[proc_macro]
+pub fn random_u64(_input: TokenStream) -> TokenStream {
+    let num = rand::rng().random::<u64>();
+    quote! { #num }.into()
 }

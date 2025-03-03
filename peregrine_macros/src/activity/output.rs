@@ -24,14 +24,9 @@ impl ToTokens for Activity {
 
         let num_operations = lines.iter().filter(|l| l.is_invoke()).count();
 
-        let timelines_bound = quote! {
-            M::Timelines: 'o + #(peregrine::timeline::HasTimeline<'o, #resources_used, M>)+*
-        };
-
         let result = quote! {
-            impl<'o, M: peregrine::Model<'o>> peregrine::activity::Activity<'o, M> for #path
-            where #timelines_bound {
-                fn decompose(&'o self, start: peregrine::activity::Placement, timelines: &M::Timelines, bump: &peregrine::reexports::bumpalo_herd::Member<'o>) -> peregrine::Result<(peregrine::Duration, Vec<&'o dyn peregrine::operation::Node<'o, M>>)> {
+            impl<'o, M: peregrine::Model<'o>> peregrine::activity::Activity<'o, M> for #path {
+                fn decompose(&'o self, start: peregrine::activity::Placement, timelines: &peregrine::timeline::Timelines<'o, M>, bump: &peregrine::reexports::bumpalo_herd::Member<'o>) -> peregrine::Result<(peregrine::Duration, Vec<&'o dyn peregrine::operation::Node<'o, M>>)> {
                     let mut operations: Vec<&'o dyn peregrine::operation::Node<'o, M>> = Vec::with_capacity(#num_operations);
                     let duration = { #(#lines)* };
                     Ok((duration, operations))

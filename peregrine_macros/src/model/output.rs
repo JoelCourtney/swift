@@ -37,11 +37,13 @@ impl ToTokens for Model {
             #visibility enum #name {}
 
             impl<'o> peregrine::Model<'o> for #name {
-                type Timelines = #timelines_struct_name<'o>;
-                type InitialConditions = #initial_conditions_struct_name<'o>;
-
                 fn init_history(history: &peregrine::history::History) {
                     #(history.init::<#resources>();)*
+                }
+                fn init_timelines(time: peregrine::Duration, mut initial_conditions: peregrine::operation::initial_conditions::InitialConditions, herd: &'o peregrine::reexports::bumpalo_herd::Herd) -> peregrine::timeline::Timelines<'o, Self> {
+                    let mut timelines = peregrine::timeline::Timelines::new(herd);
+                    #(timelines.init_for_resource::<#resources>(time, peregrine::operation::initial_conditions::InitialConditionOp::new(time, initial_conditions.take::<#resources>().expect(&format!("expected to find initial condition for resource {}, but found none", <#resources as peregrine::resource::Resource<'o>>::LABEL))));)*
+                    timelines
                 }
             }
 
@@ -63,29 +65,6 @@ impl ToTokens for Model {
                     }
                 }
             }
-
-            #(
-                impl<'o> peregrine::timeline::HasTimeline<'o, #resources, #name> for #timelines_struct_name<'o> {
-                    fn find_child(&self, time: peregrine::Duration) -> Option<&'o dyn peregrine::operation::Upstream<'o, #resources, #name>> {
-                        let (last_time, last_op) = self.#timeline_names.last()?;
-                        if last_time < time {
-                            Some(last_op)
-                        } else {
-                            Some(self.#timeline_names.last_before(time)?.1)
-                        }
-                    }
-                    fn insert_operation(&mut self, time: peregrine::Duration, op: &'o dyn peregrine::operation::Upstream<'o, #resources, #name>) -> Option<&'o dyn peregrine::operation::Upstream<'o, #resources, #name>> {
-                        self.#timeline_names.insert(time, op)
-                    }
-                    fn remove_operation(&mut self, time: peregrine::Duration) -> Option<&'o dyn peregrine::operation::Upstream<'o, #resources, #name>> {
-                        self.#timeline_names.remove(time)
-                    }
-
-                    fn get_operations(&self, bounds: impl std::ops::RangeBounds<peregrine::Duration>) -> Vec<(peregrine::Duration, &'o dyn peregrine::operation::Upstream<'o, #resources, #name>)> {
-                        self.#timeline_names.range(bounds).map(|(t,n)| (t, n)).collect()
-                    }
-                }
-            )*
         };
 
         tokens.append_all(result);

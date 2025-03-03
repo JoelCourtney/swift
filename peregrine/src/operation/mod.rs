@@ -5,7 +5,9 @@ pub mod ungrounded;
 
 use crate::Model;
 use crate::exec::ExecEnvironment;
+use crate::operation::ungrounded::{Marked, MarkedValue};
 use crate::resource::Resource;
+use crate::timeline::Timelines;
 use anyhow::Result;
 use crossbeam::queue::SegQueue;
 use derive_more::Deref;
@@ -20,8 +22,8 @@ use std::fmt::{Debug, Display, Formatter};
 pub type InternalResult<T> = Result<T, ObservedErrorOutput>;
 
 pub trait Node<'o, M: Model<'o> + 'o>: Sync {
-    fn insert_self(&'o self, timelines: &mut M::Timelines) -> Result<()>;
-    fn remove_self(&self, timelines: &mut M::Timelines) -> Result<()>;
+    fn insert_self(&'o self, timelines: &mut Timelines<'o, M>, disruptive: bool) -> Result<()>;
+    fn remove_self(&self, timelines: &mut Timelines<'o, M>) -> Result<()>;
 
     fn clear_cache(&self);
 
@@ -33,7 +35,7 @@ pub trait Downstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
         &'o self,
         value: InternalResult<(u64, R::Read)>,
         scope: &Scope<'s>,
-        timelines: &'s M::Timelines,
+        timelines: &'s Timelines<'o, M>,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's;
@@ -46,7 +48,7 @@ pub trait Upstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
         &'o self,
         continuation: Continuation<'o, R, M>,
         scope: &Scope<'s>,
-        timelines: &'s M::Timelines,
+        timelines: &'s Timelines<'o, M>,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's;
@@ -54,6 +56,7 @@ pub trait Upstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
 
 pub enum Continuation<'o, R: Resource<'o>, M: Model<'o> + 'o> {
     Node(&'o dyn Downstream<'o, R, M>),
+    MarkedNode(usize, &'o dyn Downstream<'o, Marked<'o, R>, M>),
     Root(oneshot::Sender<InternalResult<R::Read>>),
 }
 
@@ -62,13 +65,27 @@ impl<'o, R: Resource<'o>, M: Model<'o> + 'o> Continuation<'o, R, M> {
         self,
         value: InternalResult<(u64, R::Read)>,
         scope: &Scope<'s>,
-        timelines: &'s M::Timelines,
+        timelines: &'s Timelines<'o, M>,
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's,
     {
         match self {
             Continuation::Node(n) => n.respond(value, scope, timelines, env),
+            Continuation::MarkedNode(marker, n) => n.respond(
+                value.map(|(hash, when)| {
+                    (
+                        hash,
+                        MarkedValue {
+                            marker,
+                            value: when,
+                        },
+                    )
+                }),
+                scope,
+                timelines,
+                env,
+            ),
             Continuation::Root(s) => s.send(value.map(|r| r.1)).unwrap(),
         }
     }
@@ -76,7 +93,7 @@ impl<'o, R: Resource<'o>, M: Model<'o> + 'o> Continuation<'o, R, M> {
     pub fn get_downstream(&self) -> Option<&'o dyn Downstream<'o, R, M>> {
         match &self {
             Continuation::Node(n) => Some(*n),
-            Continuation::Root(_) => None,
+            _ => None,
         }
     }
 }
@@ -120,6 +137,7 @@ impl Display for ObservedErrorOutput {
 
 pub type NodeVec<'o, M> = SmallVec<&'o dyn Node<'o, M>, 2>;
 pub type DownstreamVec<'o, R, M> = SmallVec<&'o dyn Downstream<'o, R, M>, 2>;
+pub type UpstreamVec<'o, R, M> = SmallVec<&'o dyn Upstream<'o, R, M>, 2>;
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone)]
 pub enum OperationState {

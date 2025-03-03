@@ -18,6 +18,9 @@ pub type PeregrineDefaultHashBuilder = foldhash::fast::FixedState;
 pub struct History(RwLock<TypeMap>);
 
 impl History {
+    pub fn new() -> Self {
+        History(RwLock::new(TypeMap::new()))
+    }
     pub fn init<'h, R: Resource<'h>>(&self) {
         match self.0.write().entry::<R::History>() {
             Entry::Occupied(_) => {}
@@ -96,7 +99,8 @@ impl<T: StableDeref + Clone> Default for DerefHistory<T> {
     }
 }
 
-impl<'h, T: StableDeref + Clone> HistoryAdapter<T, &'h T::Target> for DerefHistory<T>
+impl<'h, T: StableDeref + Clone + From<&'h T::Target>> HistoryAdapter<T, &'h T::Target>
+    for DerefHistory<T>
 where
     Self: 'h,
 {
@@ -110,6 +114,16 @@ where
             let value: *const T = &*r;
             &**value
         })
+    }
+}
+
+impl<W, R> HistoryAdapter<W, R> for () {
+    fn insert(&self, _hash: u64, _value: W) -> R {
+        unreachable!()
+    }
+
+    fn get(&self, _hash: u64) -> Option<R> {
+        None
     }
 }
 

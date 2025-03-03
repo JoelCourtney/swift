@@ -1,5 +1,6 @@
 use crate::activity::Placement::Grounded;
 use crate::operation::Node;
+use crate::timeline::Timelines;
 use crate::{Model, Time};
 use anyhow::Result;
 use bumpalo_herd::Member;
@@ -13,7 +14,7 @@ pub trait Activity<'o, M: Model<'o>>: Send + Sync {
     fn decompose(
         &'o self,
         start: Placement,
-        timelines: &M::Timelines,
+        timelines: &Timelines<'o, M>,
         bump: &Member<'o>,
     ) -> Result<(Duration, Vec<&'o dyn Node<'o, M>>)>;
 }

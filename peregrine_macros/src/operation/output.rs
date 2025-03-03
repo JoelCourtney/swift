@@ -62,12 +62,6 @@ impl Op {
             read_writes: read_writes.clone(),
             all_reads: reads.iter().chain(read_writes.iter()).cloned().collect(),
             all_writes: writes.iter().chain(read_writes.iter()).cloned().collect(),
-            all_resources: reads
-                .iter()
-                .chain(writes.iter())
-                .chain(read_writes.iter())
-                .cloned()
-                .collect(),
         }
     }
 }
@@ -101,7 +95,6 @@ struct Idents {
     read_writes: Vec<Ident>,
     all_reads: Vec<Ident>,
     all_writes: Vec<Ident>,
-    all_resources: Vec<Ident>,
 }
 
 fn generate_operation(idents: &Idents) -> TokenStream {
@@ -115,7 +108,6 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         activity,
         all_reads,
         all_writes,
-        all_resources,
         ..
     } = idents;
 
@@ -135,10 +127,6 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         .collect::<Vec<_>>();
 
     let num_reads = all_reads.len() as u8;
-
-    let timelines_bound = quote! {
-        M::Timelines: #(peregrine::timeline::HasTimeline<'o, #all_resources, M>)+*
-    };
 
     quote! {
         struct #op_relationships<'o, M: peregrine::Model<'o>> {
@@ -171,8 +159,8 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             #(#all_writes(&'o dyn peregrine::operation::Downstream<'o, #all_writes, M>),)*
         }
 
-        impl<'s, 'o: 's, M: peregrine::Model<'o>> #op<'o, M> where #timelines_bound {
-            fn run_continuations(&self, scope: &peregrine::reexports::rayon::Scope<'s>, timelines: &'s M::Timelines, env: peregrine::exec::ExecEnvironment<'s, 'o>) {
+        impl<'s, 'o: 's, M: peregrine::Model<'o>> #op<'o, M> {
+            fn run_continuations(&self, scope: &peregrine::reexports::rayon::Scope<'s>, timelines: &'s peregrine::timeline::Timelines<'o, M>, env: peregrine::exec::ExecEnvironment<'s, 'o>) {
                 let result = unsafe {
                     *self.result.get()
                 };
@@ -208,11 +196,11 @@ fn generate_operation(idents: &Idents) -> TokenStream {
                 }
             }
 
-            fn send_requests(&'o self, mut relationships: peregrine::reexports::parking_lot::MutexGuard<'o, #op_relationships<'o, M>>, scope: &peregrine::reexports::rayon::Scope<'s>, timelines: &'s M::Timelines, env: peregrine::exec::ExecEnvironment<'s, 'o>) {
+            fn send_requests(&'o self, mut relationships: peregrine::reexports::parking_lot::MutexGuard<'o, #op_relationships<'o, M>>, scope: &peregrine::reexports::rayon::Scope<'s>, timelines: &'s peregrine::timeline::Timelines<'o, M>, env: peregrine::exec::ExecEnvironment<'s, 'o>) {
                 #(
                     if relationships.#all_reads.is_none() {
-                        relationships.#all_reads = Some(<M::Timelines as peregrine::timeline::HasTimeline<'o, #all_reads, M>>::find_child(timelines, self.time)
-                            .expect("Could not find an upstream node. Did you insert before the initial conditions?"));
+                        relationships.#all_reads = Some(timelines.find_upstream(self.time))
+                            .expect("Could not find an upstream node. Did you insert before the initial conditions?");
                     }
                 )*
                 let (#(#all_reads,)*) = (#(relationships.#all_reads,)*);
@@ -270,20 +258,23 @@ fn generate_operation(idents: &Idents) -> TokenStream {
             }
         }
 
-        impl<'o, M: peregrine::Model<'o>> peregrine::operation::Node<'o, M> for #op<'o, M>
-        where #timelines_bound {
-            fn insert_self(&'o self, timelines: &mut M::Timelines) -> peregrine::Result<()> {
+        impl<'o, M: peregrine::Model<'o>> peregrine::operation::Node<'o, M> for #op<'o, M> {
+            fn insert_self(&'o self, timelines: &mut peregrine::timeline::Timelines<'o, M>, disruptive: bool) -> peregrine::Result<()> {
                 #(
-                    let previous = <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::insert_operation(timelines, self.time, self)
-                        .ok_or_else(|| peregrine::anyhow!("Could not find an upstream node. Did you insert before the initial conditions?"))?;
-                    previous.notify_downstreams(self.time);
+                    let previous = timelines.insert_grounded::<#all_writes>(self.time, self, disruptive);
+                    if disruptive {
+                        assert!(previous.len() > 0);
+                        for p in previous {
+                            p.notify_downstreams(self.time);
+                        }
+                    }
                 )*
                 Ok(())
             }
-            fn remove_self(&self, timelines: &mut M::Timelines) -> peregrine::Result<()> {
+            fn remove_self(&self, timelines: &mut peregrine::timeline::Timelines<'o, M>) -> peregrine::Result<()> {
                 #(
-                    let this = <M::Timelines as peregrine::timeline::HasTimeline<#all_writes, M>>::remove_operation(timelines, self.time);
-                    if this.is_none() {
+                    let removed = timelines.remove_grounded::<#all_writes>(self.time);
+                    if !removed {
                         peregrine::bail!("Removal failed; could not find self at the expected time.")
                     }
                 )*
@@ -331,13 +322,12 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         }
 
         #(
-            impl<'o, M: peregrine::Model<'o>> peregrine::operation::Downstream<'o, #all_reads, M> for #op<'o, M>
-            where #timelines_bound {
+            impl<'o, M: peregrine::Model<'o>> peregrine::operation::Downstream<'o, #all_reads, M> for #op<'o, M> {
                 fn respond<'s>(
                     &'o self,
                     value: peregrine::operation::InternalResult<(u64, <#all_reads as peregrine::resource::Resource<'o>>::Read)>,
                     scope: &peregrine::reexports::rayon::Scope<'s>,
-                    timelines: &'s M::Timelines,
+                    timelines: &'s peregrine::timeline::Timelines<'o, M>,
                     env: peregrine::exec::ExecEnvironment<'s, 'o>
                 ) where 'o: 's {
                     debug_assert_eq!(OperationState::Waiting, self.state.load());
@@ -379,13 +369,12 @@ fn generate_operation(idents: &Idents) -> TokenStream {
         )*
 
         #(
-            impl<'o, M: peregrine::Model<'o>> peregrine::operation::Upstream<'o, #all_writes, M> for #op<'o, M>
-            where #timelines_bound {
+            impl<'o, M: peregrine::Model<'o>> peregrine::operation::Upstream<'o, #all_writes, M> for #op<'o, M> {
                 fn request<'s>(
                     &'o self,
                     continuation: peregrine::operation::Continuation<'o, #all_writes, M>,
                     scope: &peregrine::reexports::rayon::Scope<'s>,
-                    timelines: &'s M::Timelines,
+                    timelines: &'s peregrine::timeline::Timelines<'o, M>,
                     env: peregrine::exec::ExecEnvironment<'s, 'o>
                 ) where 'o: 's {
                     use peregrine::operation::OperationState;
