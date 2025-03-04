@@ -62,6 +62,6 @@ impl StmtOrInvoke {
 #[derive(Debug)]
 enum Target {
     Inline(Op),
-    _Activity(Expr),
-    _Routine(Expr),
+    Activity(Expr),
+    Routine(Expr),
 }

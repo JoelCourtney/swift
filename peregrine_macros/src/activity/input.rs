@@ -1,4 +1,5 @@
 use crate::activity::{Activity, ActivityStructure, Invocation, Placement, StmtOrInvoke, Target};
+use syn::parse::discouraged::Speculative;
 use syn::parse::{Parse, ParseStream};
 use syn::{Expr, ItemEnum, ItemStruct, Path, Result, Stmt, Token, braced, parenthesized};
 
@@ -71,9 +72,7 @@ impl Parse for Invocation {
             None
         };
 
-        let op_body;
-        braced!(op_body in input);
-        let target = op_body.parse()?;
+        let target = input.parse()?;
 
         Ok(Invocation {
             time: Placement {
@@ -87,6 +86,28 @@ impl Parse for Invocation {
 
 impl Parse for Target {
     fn parse(input: ParseStream) -> Result<Self> {
-        Ok(Target::Inline(input.parse()?))
+        if input.peek(syn::Ident) {
+            let forked = input.fork();
+            let ident: syn::Ident = forked.parse()?;
+            let is_spawn = if ident == "spawn" {
+                input.advance_to(&forked);
+                true
+            } else {
+                false
+            };
+
+            let expr: Expr = input.parse()?;
+            let _: Token![;] = input.parse()?;
+
+            if is_spawn {
+                Ok(Target::Activity(expr))
+            } else {
+                Ok(Target::Routine(expr))
+            }
+        } else {
+            let op_body;
+            braced!(op_body in input);
+            Ok(Target::Inline(op_body.parse()?))
+        }
     }
 }

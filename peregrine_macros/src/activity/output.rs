@@ -6,7 +6,6 @@ impl ToTokens for Activity {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Activity { path, lines, .. } = &self;
 
-        let mut resources_used = vec![];
         let mut op_functions = vec![];
         for line in &self.lines {
             if let StmtOrInvoke::Invoke(Invocation {
@@ -14,10 +13,6 @@ impl ToTokens for Activity {
                 ..
             }) = line
             {
-                resources_used.extend(op.reads.clone());
-                resources_used.extend(op.writes.clone());
-                resources_used.extend(op.read_writes.clone());
-
                 op_functions.push(op.body_function());
             }
         }
@@ -63,10 +58,15 @@ impl ToTokens for Invocation {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let placement = &self.time;
         let op = &self.target;
-        let result = quote! {
-            operations.push(bump.alloc((#op)(match #placement {
-                peregrine::activity::Placement::Grounded(t) => peregrine::timeline::epoch_to_duration(t),
-            })));
+        let result = match self.target {
+            Target::Inline(_) => quote! {
+                operations.push(bump.alloc((#op)(match #placement {
+                    peregrine::activity::Placement::Grounded(t) => peregrine::timeline::epoch_to_duration(t),
+                })));
+            },
+            _ => quote! {
+                operations.extend((#op)(#placement)?);
+            },
         };
         tokens.extend(result);
     }
@@ -92,8 +92,15 @@ impl ToTokens for Target {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         match &self {
             Target::Inline(op) => op.to_tokens(tokens),
-            Target::_Activity(a) => a.to_tokens(tokens),
-            Target::_Routine(r) => r.to_tokens(tokens),
+            Target::Activity(expr) | Target::Routine(expr) => {
+                let result = quote! {
+                    |start| {
+                        let output = (#expr).decompose(start, timelines, bump)?;
+                        Ok::<Vec<&dyn peregrine::operation::Node<'o, M>>, peregrine::Error>(output.1)
+                    }
+                };
+                tokens.extend(result);
+            }
         }
     }
 }
