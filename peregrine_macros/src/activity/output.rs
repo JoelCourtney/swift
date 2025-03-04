@@ -21,7 +21,7 @@ impl ToTokens for Activity {
 
         let result = quote! {
             impl<'o, M: peregrine::Model<'o>> peregrine::activity::Activity<'o, M> for #path {
-                fn decompose(&'o self, start: peregrine::activity::Placement, timelines: &peregrine::timeline::Timelines<'o, M>, bump: &peregrine::reexports::bumpalo_herd::Member<'o>) -> peregrine::Result<(peregrine::Duration, Vec<&'o dyn peregrine::operation::Node<'o, M>>)> {
+                fn decompose(&'o self, start: peregrine::Grounding<'o, M>, bump: peregrine::reexports::bumpalo_herd::Member<'o>) -> peregrine::Result<(peregrine::Duration, Vec<&'o dyn peregrine::operation::Node<'o, M>>)> {
                     let mut operations: Vec<&'o dyn peregrine::operation::Node<'o, M>> = Vec::with_capacity(#num_operations);
                     let duration = { #(#lines)* };
                     Ok((duration, operations))
@@ -60,12 +60,10 @@ impl ToTokens for Invocation {
         let op = &self.target;
         let result = match self.target {
             Target::Inline(_) => quote! {
-                operations.push(bump.alloc((#op)(match #placement {
-                    peregrine::activity::Placement::Grounded(t) => peregrine::timeline::epoch_to_duration(t),
-                })));
+                operations.push((#op)(#placement, self, bump));
             },
             _ => quote! {
-                operations.extend((#op)(#placement)?);
+                operations.extend((#op)(#placement, self, bump)?);
             },
         };
         tokens.extend(result);
@@ -94,8 +92,8 @@ impl ToTokens for Target {
             Target::Inline(op) => op.to_tokens(tokens),
             Target::Activity(expr) | Target::Routine(expr) => {
                 let result = quote! {
-                    |start| {
-                        let output = (#expr).decompose(start, timelines, bump)?;
+                    |start, bump| {
+                        let output = (#expr).decompose(start, bump)?;
                         Ok::<Vec<&dyn peregrine::operation::Node<'o, M>>, peregrine::Error>(output.1)
                     }
                 };

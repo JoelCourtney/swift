@@ -1,6 +1,5 @@
 #![allow(clippy::self_assignment)]
 
-use peregrine::reexports::hifitime::TimeUnits;
 use peregrine::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};

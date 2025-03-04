@@ -206,7 +206,7 @@
 
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::ops::RangeBounds;
+use std::ops::{Add, RangeBounds};
 
 /// Creates a model and associated structs from a selection of resources.
 ///
@@ -288,17 +288,17 @@ pub mod resource;
 pub mod timeline;
 
 pub use crate::activity::{Activity, ActivityId};
-use crate::exec::ExecEnvironment;
+use crate::exec::{ErrorAccumulator, ExecEnvironment};
 pub use crate::history::History;
-use crate::operation::InternalResult;
 pub use crate::operation::initial_conditions::InitialConditions;
+use crate::operation::ungrounded::peregrine_grounding;
+use crate::operation::{InternalResult, Upstream};
 use crate::timeline::{MaybeGrounded, Timelines, duration_to_epoch, epoch_to_duration};
-use activity::Placement;
 pub use anyhow::{Context, Error, Result, anyhow, bail};
 use bumpalo_herd::Herd;
 pub use hifitime::{Duration, Epoch as Time};
 use oneshot::Receiver;
-use operation::{Continuation, ErrorAccumulator, Node};
+use operation::{Continuation, Node};
 use resource::Resource;
 
 #[derive(Default)]
@@ -388,7 +388,7 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
         let activity = bump.alloc(activity);
         let activity_pointer = activity as *mut dyn Activity<'o, M>;
         let (_duration, operations) =
-            activity.decompose(Placement::Grounded(time), &self.timelines, &bump)?;
+            activity.decompose(Grounding::Static(epoch_to_duration(time)), bump)?;
 
         for op in &operations {
             op.insert_self(&mut self.timelines, self.has_been_simulated.take())?;
@@ -478,13 +478,13 @@ impl<'o, M: Model<'o> + 'o> Plan<'o, M> {
                         ));
                         scope.spawn(move |s| {
                             n.request(
-                                Continuation::Root(grounding_sender),
+                                Continuation::<peregrine_grounding, M>::Root(grounding_sender),
                                 s,
                                 timelines,
                                 env.reset(),
                             );
-                            n.as_ref().request(
-                                Continuation::Root(sender),
+                            n.request(
+                                Continuation::<R, M>::Root(sender),
                                 s,
                                 timelines,
                                 env.reset(),
@@ -542,4 +542,52 @@ pub trait Model<'o>: Sync {
         initial_conditions: InitialConditions,
         herd: &'o Herd,
     ) -> Timelines<'o, Self>;
+}
+
+pub enum Grounding<'o, M: Model<'o>> {
+    Static(Duration),
+    Dynamic {
+        min: Duration,
+        max: Duration,
+        node: &'o dyn Upstream<'o, peregrine_grounding, M>,
+    },
+}
+
+impl<'o, M: Model<'o>> Clone for Grounding<'o, M> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'o, M: Model<'o>> Copy for Grounding<'o, M> {}
+
+impl<'o, M: Model<'o>> Grounding<'o, M> {
+    pub fn unwrap_node(&self) -> &dyn Upstream<'o, peregrine_grounding, M> {
+        match self {
+            Grounding::Static(_) => panic!("tried to unwrap a static grounding"),
+            Grounding::Dynamic { node, .. } => *node,
+        }
+    }
+
+    pub fn min(&self) -> Duration {
+        match self {
+            Grounding::Static(start) => *start,
+            Grounding::Dynamic { min, .. } => *min,
+        }
+    }
+}
+
+impl<'o, M: Model<'o>> Add<Duration> for Grounding<'o, M> {
+    type Output = Self;
+
+    fn add(self, rhs: Duration) -> Self::Output {
+        match self {
+            Grounding::Static(start) => Grounding::Static(start + rhs),
+            Grounding::Dynamic { min, max, node } => Grounding::Dynamic {
+                min: min + rhs,
+                max: max + rhs,
+                node,
+            },
+        }
+    }
 }

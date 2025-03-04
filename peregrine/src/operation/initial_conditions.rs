@@ -1,13 +1,14 @@
 use crate::Model;
 use crate::exec::ExecEnvironment;
 use crate::history::PeregrineDefaultHashBuilder;
-use crate::operation::{Continuation, DownstreamVec, Node, Upstream};
+use crate::operation::{Continuation, Node, Upstream};
 use crate::resource::{ErasedResource, Resource};
 use crate::timeline::Timelines;
 use anyhow::anyhow;
 use hifitime::Duration;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use rayon::Scope;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::hash::BuildHasher;
 
@@ -56,7 +57,7 @@ impl<'h, R: Resource<'h>> ErasedResource<'h> for WriteValue<'h, R> {
 pub struct InitialConditionOp<'o, R: Resource<'o>, M: Model<'o>> {
     value: R::Write,
     result: RwLock<Option<(u64, R::Read)>>,
-    downstreams: Mutex<DownstreamVec<'o, R, M>>,
+    downstreams: Mutex<SmallVec<Continuation<'o, R, M>, 2>>,
     _time: Duration,
 }
 
@@ -65,7 +66,7 @@ impl<'o, R: Resource<'o>, M: Model<'o>> InitialConditionOp<'o, R, M> {
         Self {
             value,
             result: RwLock::new(None),
-            downstreams: Mutex::new(DownstreamVec::new()),
+            downstreams: Mutex::default(),
             _time: time,
         }
     }
@@ -82,16 +83,6 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Node<'o, M> for InitialConditionOp<'o, R
 
     fn remove_self(&self, _timelines: &mut Timelines<'o, M>) -> anyhow::Result<()> {
         Err(anyhow!("Cannot remove initial conditions."))
-    }
-
-    fn clear_cache(&self) {
-        unreachable!()
-    }
-
-    fn notify_downstreams(&self, time_of_change: Duration) {
-        for downstream in self.downstreams.lock().drain(..) {
-            downstream.clear_upstream(Some(time_of_change));
-        }
     }
 }
 
@@ -122,10 +113,20 @@ impl<'o, R: Resource<'o> + 'o, M: Model<'o>> Upstream<'o, R, M> for InitialCondi
             self.result.read()
         };
 
-        if let Some(d) = continuation.get_downstream() {
-            self.downstreams.lock().push(d);
+        if let Some(c) = continuation.copy_node() {
+            self.downstreams.lock().push(c);
         }
 
         continuation.run(Ok(read.unwrap()), scope, timelines, env.increment());
+    }
+
+    fn notify_downstreams(&self, time_of_change: Duration) {
+        self.downstreams
+            .lock()
+            .retain(|downstream| match downstream {
+                Continuation::Node(n) => n.clear_upstream(Some(time_of_change)),
+                Continuation::MarkedNode(_, n) => n.clear_upstream(Some(time_of_change)),
+                _ => unreachable!(),
+            });
     }
 }

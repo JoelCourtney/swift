@@ -1,6 +1,7 @@
 use crate::{battery, mode};
 use peregrine::Duration;
 use peregrine::impl_activity;
+use peregrine::reexports::hifitime::TimeUnits;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -9,7 +10,7 @@ pub struct RechargePotato {
 }
 
 impl_activity! { for RechargePotato
-    let end = start + Duration::from_hours(1.0);
+    let end = start + 1.hours();
     @(end) {
         ref mut: battery += 4.0;
         mut: mode = "help".to_string();

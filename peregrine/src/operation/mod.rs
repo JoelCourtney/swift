@@ -9,14 +9,10 @@ use crate::operation::ungrounded::{Marked, MarkedValue};
 use crate::resource::Resource;
 use crate::timeline::Timelines;
 use anyhow::Result;
-use crossbeam::queue::SegQueue;
-use derive_more::Deref;
 use derive_more::with_trait::Error as DeriveError;
 use hifitime::Duration;
 use rayon::Scope;
 use smallvec::SmallVec;
-use std::cell::UnsafeCell;
-use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
 pub type InternalResult<T> = Result<T, ObservedErrorOutput>;
@@ -24,10 +20,6 @@ pub type InternalResult<T> = Result<T, ObservedErrorOutput>;
 pub trait Node<'o, M: Model<'o> + 'o>: Sync {
     fn insert_self(&'o self, timelines: &mut Timelines<'o, M>, disruptive: bool) -> Result<()>;
     fn remove_self(&self, timelines: &mut Timelines<'o, M>) -> Result<()>;
-
-    fn clear_cache(&self);
-
-    fn notify_downstreams(&self, time_of_change: Duration);
 }
 
 pub trait Downstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
@@ -40,6 +32,7 @@ pub trait Downstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
     ) where
         'o: 's;
 
+    fn clear_cache(&self);
     fn clear_upstream(&self, time_of_change: Option<Duration>) -> bool;
 }
 
@@ -52,6 +45,8 @@ pub trait Upstream<'o, R: Resource<'o>, M: Model<'o> + 'o>: Node<'o, M> {
         env: ExecEnvironment<'s, 'o>,
     ) where
         'o: 's;
+
+    fn notify_downstreams(&self, time_of_change: Duration);
 }
 
 pub enum Continuation<'o, R: Resource<'o>, M: Model<'o> + 'o> {
@@ -90,9 +85,10 @@ impl<'o, R: Resource<'o>, M: Model<'o> + 'o> Continuation<'o, R, M> {
         }
     }
 
-    pub fn get_downstream(&self) -> Option<&'o dyn Downstream<'o, R, M>> {
+    pub fn copy_node(&self) -> Option<Self> {
         match &self {
-            Continuation::Node(n) => Some(*n),
+            Continuation::Node(n) => Some(Continuation::Node(*n)),
+            Continuation::MarkedNode(m, n) => Some(Continuation::MarkedNode(*m, *n)),
             _ => None,
         }
     }
@@ -136,49 +132,12 @@ impl Display for ObservedErrorOutput {
 }
 
 pub type NodeVec<'o, M> = SmallVec<&'o dyn Node<'o, M>, 2>;
-pub type DownstreamVec<'o, R, M> = SmallVec<&'o dyn Downstream<'o, R, M>, 2>;
 pub type UpstreamVec<'o, R, M> = SmallVec<&'o dyn Upstream<'o, R, M>, 2>;
 
-#[derive(Eq, PartialEq, Debug, Copy, Clone)]
+#[derive(Eq, PartialEq, Debug, Copy, Clone, Default)]
 pub enum OperationState {
+    #[default]
     Dormant,
     Waiting,
     Done,
 }
-
-#[derive(Deref)]
-#[repr(transparent)]
-pub struct UnsyncUnsafeCell<T>(UnsafeCell<T>);
-unsafe impl<T> Sync for UnsyncUnsafeCell<T> {}
-
-impl<T> UnsyncUnsafeCell<T> {
-    pub fn new(value: T) -> Self {
-        Self(UnsafeCell::new(value))
-    }
-}
-
-#[derive(Default, Debug)]
-pub struct ErrorAccumulator(SegQueue<anyhow::Error>);
-impl ErrorAccumulator {
-    pub fn push(&self, err: anyhow::Error) {
-        if !err.is::<ObservedErrorOutput>() {
-            self.0.push(err);
-        }
-    }
-
-    pub fn into_vec(self) -> Vec<anyhow::Error> {
-        self.0.into_iter().collect()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-}
-
-impl Display for ErrorAccumulator {
-    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
-    }
-}
-
-impl Error for ErrorAccumulator {}

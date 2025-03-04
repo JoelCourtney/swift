@@ -82,13 +82,14 @@ impl<'o, M: Model<'o>> Timelines<'o, M> {
         min: Duration,
         max: Duration,
         op: &'o dyn UngroundedUpstream<'o, R, M>,
+        disruptive: bool,
     ) -> UpstreamVec<'o, R, M> {
         unsafe {
             self.0
                 .get_mut(&R::ID)
                 .unwrap()
                 .downcast_mut::<Timeline<'o, R, M>>()
-                .insert_ungrounded(min, max, op)
+                .insert_ungrounded(min, max, op, disruptive)
         }
     }
 
@@ -305,6 +306,7 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Timeline<'o, R, M> {
         min: Duration,
         max: Duration,
         value: &'o dyn UngroundedUpstream<'o, R, M>,
+        disruptive: bool,
     ) -> UpstreamVec<'o, R, M> {
         let mut entry = TimelineEntry::new_ungrounded(value, max);
         entry.ungrounded.extend(
@@ -317,23 +319,25 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Timeline<'o, R, M> {
 
         // Need to collect the list of all nodes that might lose a downstream after this change
         let mut result = UpstreamVec::new();
-        let mut ungrounded_collector = TimelineEntry::new_empty();
-        for (_, e) in self.0.range_mut(min..max) {
-            ungrounded_collector.merge(e);
-            if let Some(gr) = ungrounded_collector.grounded.take() {
-                result.push(gr);
+        if disruptive {
+            let mut ungrounded_collector = TimelineEntry::new_empty();
+            for (_, e) in self.0.range_mut(min..max) {
+                ungrounded_collector.merge(e);
+                if let Some(gr) = ungrounded_collector.grounded.take() {
+                    result.push(gr);
+                }
+
+                e.ungrounded.insert(max, value);
             }
 
-            e.ungrounded.insert(max, value);
+            result.extend(
+                ungrounded_collector
+                    .ungrounded
+                    .into_values()
+                    .map(|ug| ug.as_ref()),
+            );
         }
         self.0.insert(min, entry);
-
-        result.extend(
-            ungrounded_collector
-                .ungrounded
-                .into_values()
-                .map(|ug| ug.as_ref()),
-        );
         result
     }
 

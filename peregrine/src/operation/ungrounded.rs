@@ -1,8 +1,10 @@
+use crate as peregrine;
 use crate::exec::ExecEnvironment;
 use crate::operation::{
     Continuation, Downstream, InternalResult, Node, ObservedErrorOutput, Upstream,
 };
 use crate::resource::Resource;
+use crate::timeline::Timelines;
 use crate::{Model, resource};
 use hifitime::Duration;
 use parking_lot::Mutex;
@@ -13,14 +15,12 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 pub trait UngroundedUpstream<'o, R: Resource<'o>, M: Model<'o> + 'o>:
-    AsRef<dyn Upstream<'o, R, M>> + Upstream<'o, peregrine_grounding, M>
+    AsRef<dyn Upstream<'o, R, M> + 'o> + Upstream<'o, R, M> + Upstream<'o, peregrine_grounding, M>
 {
 }
 
-use crate as peregrine;
-use crate::timeline::Timelines;
-
 resource!(pub peregrine_grounding: Duration);
+resource!(pub peregrine_delay: Duration);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(crate = "peregrine::reexports::serde")]
@@ -96,19 +96,6 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Node<'o, M> for UngroundedUpstreamResolv
     fn remove_self(&self, _timelines: &mut Timelines<'o, M>) -> anyhow::Result<()> {
         unreachable!()
     }
-
-    fn clear_cache(&self) {
-        *self.cached_decision.lock() = None;
-        if let Some(d) = self.downstream {
-            d.clear_cache();
-        }
-    }
-
-    fn notify_downstreams(&self, time_of_change: Duration) {
-        if let Some(d) = self.downstream {
-            d.clear_upstream(Some(time_of_change));
-        }
-    }
 }
 
 impl<'o, R: Resource<'o>, M: Model<'o>> Upstream<'o, R, M>
@@ -158,6 +145,12 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Upstream<'o, R, M>
                 timelines,
                 env.increment(),
             );
+        }
+    }
+
+    fn notify_downstreams(&self, time_of_change: Duration) {
+        if let Some(d) = self.downstream {
+            d.clear_upstream(Some(time_of_change));
         }
     }
 }
@@ -226,11 +219,14 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Downstream<'o, Marked<'o, peregrine_grou
         }
     }
 
-    fn clear_upstream(&self, _time_of_change: Option<Duration>) -> bool {
+    fn clear_cache(&self) {
+        *self.cached_decision.lock() = None;
         if let Some(d) = self.downstream {
-            d.clear_upstream(_time_of_change)
-        } else {
-            false
+            d.clear_cache();
         }
+    }
+
+    fn clear_upstream(&self, _time_of_change: Option<Duration>) -> bool {
+        self.downstream.unwrap().clear_upstream(_time_of_change)
     }
 }
