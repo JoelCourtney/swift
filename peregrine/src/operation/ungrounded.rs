@@ -140,15 +140,24 @@ impl<'o, R: Resource<'o>, M: Model<'o>> Upstream<'o, R, M>
         *continuation_lock = Some(continuation);
         drop(continuation_lock);
 
-        for (i, ungrounded) in self.ungrounded_upstreams[1..].iter().enumerate() {
-            scope.spawn(move |s| {
-                ungrounded.request(
-                    Continuation::<peregrine_grounding, M>::MarkedNode(i, self),
-                    s,
-                    timelines,
-                    env.reset(),
-                )
-            });
+        if !self.ungrounded_upstreams.is_empty() {
+            for (i, ungrounded) in self.ungrounded_upstreams[1..].iter().enumerate() {
+                scope.spawn(move |s| {
+                    ungrounded.request(
+                        Continuation::<peregrine_grounding, M>::MarkedNode(i, self),
+                        s,
+                        timelines,
+                        env.reset(),
+                    )
+                });
+            }
+
+            self.ungrounded_upstreams[0].request(
+                Continuation::<peregrine_grounding, M>::MarkedNode(0, self),
+                scope,
+                timelines,
+                env.increment(),
+            );
         }
     }
 }
